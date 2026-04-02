@@ -13,8 +13,8 @@
     "debug:gemini": "tsx scripts/test-gemini.ts",
     "debug:gemini-image": "tsx scripts/test-gemini-image.ts",
     "debug:extract-frame": "tsx scripts/test-extract-frame.ts",
-    "trigger:dev": "npx trigger.dev@latest dev --config ./trigger.config.ts",
-    "trigger:deploy": "npx trigger.dev@latest deploy --config ./trigger.config.ts"
+    "trigger:dev": "npx trigger.dev@latest dev --config ./trigger.config.mjs",
+    "trigger:deploy": "npx trigger.dev@latest deploy --config ./trigger.config.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.16.3",

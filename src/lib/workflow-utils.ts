@@ -175,7 +175,7 @@ export function createNodeTemplate(type: WorkflowNodeType, index: number): Workf
           description: "Transloadit powered media input",
           fileName: "hero-shot.webp",
           imageUrl:
-            "https://images.unsplash.com/photo-1517336714739-489689fd1ca8?auto=format&fit=crop&w=1200&q=80",
+            "",
           outputKind: "image",
         },
       };
@@ -190,7 +190,7 @@ export function createNodeTemplate(type: WorkflowNodeType, index: number): Workf
           nodeType: "uploadVideo",
           description: "Transloadit video input",
           fileName: "campaign-cut.mp4",
-          videoUrl: "https://www.w3schools.com/html/mov_bbb.mp4",
+          videoUrl: "",
           outputKind: "video",
         },
       };

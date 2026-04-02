@@ -2,7 +2,7 @@
 
 import { memo, useRef } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Bot, Crop, FileText, Film, Image as ImageIcon, Upload, Video } from "lucide-react";
+import { Bot, Crop, FileText, Film, Image as ImageIcon, Play, Trash2, Upload, Video } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isInputConnected } from "@/lib/workflow-utils";
 import { useWorkflowStudioStore } from "@/components/workflow/workflow-store";
@@ -18,6 +18,20 @@ import type {
 
 const llmModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3-flash", "gemma-3-27b-it"];
 const imageModels = ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"];
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+async function parseJsonSafely(response: Response) {
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
 
 function Field({
   label,
@@ -128,17 +142,21 @@ function NodeFrame({
         <div className="flex gap-2">
           <button
             type="button"
-            className="rounded-full bg-white/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-white/14"
+            aria-label={`Run ${title}`}
+            title="Run node"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/8 text-white transition-colors hover:bg-white/14"
             onClick={() => runSingleNode(id)}
           >
-            Run
+            <Play className="h-3.5 w-3.5" />
           </button>
           <button
             type="button"
-            className="rounded-full bg-white/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-secondary transition-colors hover:bg-red-500/18 hover:text-red-100"
+            aria-label={`Delete ${title}`}
+            title="Delete node"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/8 text-secondary transition-colors hover:bg-red-500/18 hover:text-red-100"
             onClick={() => removeNode(id)}
           >
-            Delete
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
@@ -170,6 +188,29 @@ function UploadImageNode({ id, data }: NodeProps) {
   const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  async function uploadFile(file: File) {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      throw new Error("Images larger than 10 MB are not supported.");
+    }
+
+    const formData = new FormData();
+    formData.set("file", file);
+    formData.set("kind", "image");
+
+    const response = await fetch("/api/uploads/transloadit", {
+      method: "POST",
+      body: formData,
+    });
+
+    const payload = (await parseJsonSafely(response)) as { ok?: boolean; url?: string; fileName?: string; error?: string };
+
+    if (!response.ok || !payload.url) {
+      throw new Error(payload.error || "Image upload failed.");
+    }
+
+    return payload;
+  }
+
   return (
     <>
       <Handle type="source" position={Position.Right} id="output" className="!h-3 !w-3 !border-0 !bg-white" />
@@ -195,22 +236,30 @@ function UploadImageNode({ id, data }: NodeProps) {
           type="file"
           accept="image/png,image/jpeg,image/webp,image/gif"
           className="hidden"
-          onChange={(event) => {
+          onChange={async (event) => {
             const file = event.target.files?.[0];
             if (!file) {
               return;
             }
 
-            const reader = new FileReader();
-            reader.onload = () => {
+            try {
+              updateNodeData(id, { result: "Uploading image..." });
+              const uploaded = await uploadFile(file);
               updateNodeData(id, {
-                fileName: file.name,
-                imageUrl: String(reader.result),
+                fileName: uploaded.fileName ?? file.name,
+                imageUrl: uploaded.url,
+                result: "Image uploaded successfully.",
               });
-            };
-            reader.readAsDataURL(file);
+            } catch (error) {
+              updateNodeData(id, {
+                result: error instanceof Error ? error.message : "Image upload failed.",
+              });
+            } finally {
+              event.target.value = "";
+            }
           }}
         />
+        {typedData.result ? <p className="mb-3 text-xs leading-6 text-secondary">{typedData.result}</p> : null}
         <Field label="Image URL" value={typedData.imageUrl ?? ""} onChange={(value) => updateNodeData(id, { imageUrl: value })} />
       </NodeFrame>
     </>
@@ -221,6 +270,29 @@ function UploadVideoNode({ id, data }: NodeProps) {
   const typedData = data as UploadVideoNodeData;
   const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  async function uploadFile(file: File) {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      throw new Error("Videos larger than 10 MB are not supported.");
+    }
+
+    const formData = new FormData();
+    formData.set("file", file);
+    formData.set("kind", "video");
+
+    const response = await fetch("/api/uploads/transloadit", {
+      method: "POST",
+      body: formData,
+    });
+
+    const payload = (await parseJsonSafely(response)) as { ok?: boolean; url?: string; fileName?: string; error?: string };
+
+    if (!response.ok || !payload.url) {
+      throw new Error(payload.error || "Video upload failed.");
+    }
+
+    return payload;
+  }
 
   return (
     <>
@@ -240,19 +312,30 @@ function UploadVideoNode({ id, data }: NodeProps) {
           type="file"
           accept="video/mp4,video/webm,video/quicktime"
           className="hidden"
-          onChange={(event) => {
+          onChange={async (event) => {
             const file = event.target.files?.[0];
             if (!file) {
               return;
             }
 
-            const url = URL.createObjectURL(file);
-            updateNodeData(id, {
-              fileName: file.name,
-              videoUrl: url,
-            });
+            try {
+              updateNodeData(id, { result: "Uploading video..." });
+              const uploaded = await uploadFile(file);
+              updateNodeData(id, {
+                fileName: uploaded.fileName ?? file.name,
+                videoUrl: uploaded.url,
+                result: "Video uploaded successfully.",
+              });
+            } catch (error) {
+              updateNodeData(id, {
+                result: error instanceof Error ? error.message : "Video upload failed.",
+              });
+            } finally {
+              event.target.value = "";
+            }
           }}
         />
+        {typedData.result ? <p className="mb-3 text-xs leading-6 text-secondary">{typedData.result}</p> : null}
         <Field label="Video URL" value={typedData.videoUrl ?? ""} onChange={(value) => updateNodeData(id, { videoUrl: value })} />
       </NodeFrame>
     </>

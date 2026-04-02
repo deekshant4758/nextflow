@@ -109,13 +109,32 @@ function persist(workflows: WorkflowRecord[], currentWorkflowId: string) {
     return;
   }
 
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      workflows,
-      currentWorkflowId,
-    }),
-  );
+  const payload = JSON.stringify({
+    workflows: workflows.map(createPersistableWorkflow),
+    currentWorkflowId,
+  });
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, payload);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "QuotaExceededError") {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          workflows: workflows.map((workflow) => ({
+            ...createPersistableWorkflow(workflow),
+            nodes: [],
+            edges: [],
+            runs: [],
+          })),
+          currentWorkflowId,
+        }),
+      );
+      return;
+    }
+
+    throw error;
+  }
 }
 
 function sanitizeStoredWorkflows(workflows: WorkflowRecord[]) {
@@ -123,6 +142,96 @@ function sanitizeStoredWorkflows(workflows: WorkflowRecord[]) {
     ...workflow,
     runs: [],
   }));
+}
+
+function stripTransientMedia(value?: string) {
+  if (!value) {
+    return value;
+  }
+
+  if (value.startsWith("data:") || value.startsWith("blob:")) {
+    return "";
+  }
+
+  return value;
+}
+
+function createPersistableNode(node: WorkflowNode): WorkflowNode {
+  switch (node.data.nodeType) {
+    case "uploadImage":
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          imageUrl: stripTransientMedia(node.data.imageUrl),
+          result: stripTransientMedia(node.data.result),
+        },
+      };
+    case "uploadVideo":
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          videoUrl: stripTransientMedia(node.data.videoUrl),
+          result: stripTransientMedia(node.data.result),
+        },
+      };
+    case "runLLM":
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          connectedImages: [],
+        },
+      };
+    case "generateImage":
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          connectedImages: [],
+          result: stripTransientMedia(node.data.result),
+        },
+      };
+    case "cropImage":
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          imageUrl: stripTransientMedia(node.data.imageUrl) ?? "",
+          result: stripTransientMedia(node.data.result),
+        },
+      };
+    case "extractFrame":
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          videoUrl: stripTransientMedia(node.data.videoUrl) ?? "",
+          result: stripTransientMedia(node.data.result),
+        },
+      };
+    default:
+      return node;
+  }
+}
+
+function createPersistableRun(run: WorkflowRun): WorkflowRun {
+  return {
+    ...run,
+    nodeRuns: run.nodeRuns.map((nodeRun) => ({
+      ...nodeRun,
+      output: stripTransientMedia(nodeRun.output),
+    })),
+  };
+}
+
+function createPersistableWorkflow(workflow: WorkflowRecord): WorkflowRecord {
+  return {
+    ...workflow,
+    nodes: workflow.nodes.map(createPersistableNode),
+    runs: workflow.runs.map(createPersistableRun).slice(0, 8),
+  };
 }
 
 function syncWorkflow(state: WorkflowState, next: { workflowName?: string; nodes?: WorkflowNode[]; edges?: WorkflowEdge[]; runs?: WorkflowRun[] }) {

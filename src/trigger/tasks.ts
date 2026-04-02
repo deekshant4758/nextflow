@@ -275,6 +275,7 @@ async function requestGeneratedImage(model: string, parsed: z.infer<typeof image
 
 export const runLlmNodeTask = task({
   id: "run-llm-node",
+  maxDuration: 300,
   run: async (payload: unknown) => {
     const parsed = llmPayloadSchema.parse(payload);
     if (!env.googleGenerativeAiApiKey) {
@@ -342,6 +343,7 @@ export const runLlmNodeTask = task({
 
 export const cropImageNodeTask = task({
   id: "crop-image-node",
+  maxDuration: 300,
   run: async (
     payload: unknown,
   ) => {
@@ -416,6 +418,7 @@ export const cropImageNodeTask = task({
 
 export const generateImageNodeTask = task({
   id: "generate-image-node",
+  maxDuration: 300,
   run: async (payload: unknown) => {
     const parsed = imageGenerationPayloadSchema.parse(payload);
 
@@ -464,6 +467,7 @@ export const generateImageNodeTask = task({
 
 export const extractFrameNodeTask = task({
   id: "extract-frame-node",
+  maxDuration: 300,
   run: async (payload: unknown) => {
     const parsed = z
       .object({

@@ -342,7 +342,11 @@ function StudioInner() {
               <button type="button" className="font-medium text-stone-500 transition-colors hover:text-stone-300" onClick={() => loadSampleWorkflow(workflowTemplates[0]?.id)}>
                 Library
               </button>
-              <button type="button" className="font-medium text-stone-500 transition-colors hover:text-stone-300" onClick={() => historyPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+              <button
+                type="button"
+                className="font-medium text-stone-500 transition-colors hover:text-stone-300"
+                onClick={() => historyPanelRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+              >
                 History
               </button>
             </div>
@@ -364,13 +368,13 @@ function StudioInner() {
       </header>
 
       <div className="flex pt-14">
-        <aside className="studio-scrollbar fixed bottom-0 left-0 top-14 z-40 flex w-80 flex-col overflow-y-auto border-r border-white/6 bg-[#111111] p-5">
+        <aside className="studio-scrollbar fixed bottom-0 left-0 top-14 z-40 flex w-[292px] flex-col overflow-y-auto border-r border-white/6 bg-[#111111] p-4">
           <div>
             <h2 className="text-sm font-semibold tracking-wide text-stone-200">Workflow Studio</h2>
             <p className="mt-1 text-[11px] text-stone-500">Realtime Editor</p>
           </div>
 
-          <div className="mt-6 rounded-[24px] border border-white/8 bg-[#151515] p-5">
+          <div className="mt-5 rounded-[22px] border border-white/8 bg-[#151515] p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-stone-500">Workflow</p>
@@ -449,7 +453,7 @@ function StudioInner() {
             </p>
           </div>
 
-          <div className="mt-5 rounded-[24px] border border-white/8 bg-[#151515] p-5">
+          <div className="mt-4 rounded-[22px] border border-white/8 bg-[#151515] p-4">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-stone-500">Your Workflows</p>
@@ -483,7 +487,7 @@ function StudioInner() {
             </div>
           </div>
 
-          <div className="mt-5 rounded-[24px] border border-white/8 bg-[#151515] p-5">
+          <div className="mt-4 rounded-[22px] border border-white/8 bg-[#151515] p-4">
             <div className="mb-4 flex items-center justify-between">
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-stone-500">Templates</p>
               <span className="rounded-full bg-[#202020] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
@@ -506,7 +510,7 @@ function StudioInner() {
             </div>
           </div>
 
-          <div className="mt-5 flex-1 rounded-[24px] border border-white/8 bg-[#151515] p-5">
+          <div className="mt-4 flex-1 rounded-[22px] border border-white/8 bg-[#151515] p-4">
             <div className="mb-4 flex items-center justify-between">
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-stone-500">Node Palette</p>
               <span className="rounded-full bg-[#202020] px-2 py-0.5 text-xs text-white">{quickAccess.length} nodes</span>
@@ -537,7 +541,7 @@ function StudioInner() {
             </div>
           </div>
 
-          <div className="mt-5 flex gap-2 border-t border-white/6 pt-4">
+          <div className="mt-4 flex gap-2 border-t border-white/6 pt-4">
             <button
               type="button"
               className="flex-1 rounded-xl bg-[#1f1f1f] px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-[#262626]"
@@ -556,7 +560,7 @@ function StudioInner() {
           </div>
         </aside>
 
-        <main className="ml-80 mr-80 h-[calc(100vh-56px)] flex-1 overflow-hidden bg-[#0e0e0e]">
+        <main className="ml-[292px] mr-[292px] h-[calc(100vh-56px)] flex-1 overflow-hidden bg-[#0e0e0e]">
           <section className="relative h-full overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.06),_transparent_28%),#0e0e0e]">
             <div className="absolute left-6 top-6 z-10 flex items-center gap-2 rounded-xl border border-white/8 bg-[#191a1a]/80 px-4 py-2 shadow-2xl backdrop-blur-xl">
               <div className="h-2 w-2 rounded-full bg-[#6dfe9c]" />
@@ -646,20 +650,20 @@ function StudioInner() {
           </section>
         </main>
 
-        <aside ref={historyPanelRef} className="studio-scrollbar fixed bottom-0 right-0 top-14 z-40 flex w-80 flex-col overflow-y-auto border-l border-white/6 bg-[#111111]">
-          <div className="border-b border-white/6 p-5">
+        <aside ref={historyPanelRef} className="studio-scrollbar fixed bottom-0 right-0 top-14 z-40 flex w-[292px] flex-col overflow-y-auto border-l border-white/6 bg-[#111111]">
+          <div className="border-b border-white/6 p-4">
             <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-stone-500">Workflow Info</p>
-            <div className="mt-4 space-y-4">
+            <div className="mt-4 space-y-3">
               <div>
                 <h3 className="text-sm font-bold text-stone-200">{workflowName || "Untitled workflow"}</h3>
                 <p className="mt-1 text-[11px] leading-relaxed text-stone-500">Build multimodal pipelines with prompt nodes, image generation, frame extraction, and LLM summarization.</p>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-[20px] border border-white/8 bg-[#151515] p-3">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="rounded-[18px] border border-white/8 bg-[#151515] p-3">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-stone-500">Total Nodes</p>
                   <p className="mt-2 text-lg font-bold text-stone-200">{nodes.length}</p>
                 </div>
-                <div className="rounded-[20px] border border-white/8 bg-[#151515] p-3">
+                <div className="rounded-[18px] border border-white/8 bg-[#151515] p-3">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-stone-500">Workflows</p>
                   <p className="mt-2 text-lg font-bold text-stone-200">{workflows.length}</p>
                 </div>
@@ -668,14 +672,11 @@ function StudioInner() {
           </div>
 
           <div className="flex flex-1 flex-col min-h-0">
-            <div className="flex items-center justify-between px-5 py-5">
+            <div className="px-4 py-4">
               <h3 className="text-[11px] font-medium uppercase tracking-[0.22em] text-stone-500">Recent Executions</h3>
-              <button className="text-[10px] uppercase tracking-[0.18em] text-stone-500 transition-colors hover:text-stone-300" onClick={() => historyPanelRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>
-                Filter
-              </button>
             </div>
 
-            <div className="flex-1 space-y-3 overflow-y-auto px-5 pb-6">
+            <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-5">
               {runs.length === 0 ? (
                 <div className="rounded-[20px] border border-white/8 bg-[#151515] p-4 text-sm leading-7 text-stone-500">No runs yet. Run the workflow to populate execution history.</div>
               ) : null}
