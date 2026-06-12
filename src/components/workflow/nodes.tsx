@@ -1,31 +1,38 @@
 "use client";
 
-import { memo, useRef } from "react";
+import { memo, useRef, useState, useEffect } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Bot, Crop, FileText, Film, Image as ImageIcon, Play, Trash2, Upload, Video } from "lucide-react";
+import {
+  AlignLeft,
+  ChevronDown,
+  FileOutput,
+  GripVertical,
+  Hash,
+  Image as ImageIcon,
+  Info,
+  Music,
+  Pencil,
+  Play,
+  Plus,
+  ToggleLeft,
+  Trash2,
+  Upload,
+  Video,
+  File,
+  Radio,
+  Copy,
+  Check,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isInputConnected } from "@/lib/workflow-utils";
 import { useWorkflowStudioStore } from "@/components/workflow/workflow-store";
-import type {
-  CropImageNodeData,
-  ExtractFrameNodeData,
-  GenerateImageNodeData,
-  RunLlmNodeData,
-  TextNodeData,
-  UploadImageNodeData,
-  UploadVideoNodeData,
-} from "@/types/workflow";
+import type { CropImageNodeData, GeminiNodeData, RequestNodeData, ResponseNodeData } from "@/types/workflow";
 
-const llmModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3-flash", "gemma-3-27b-it"];
-const imageModels = ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 async function parseJsonSafely(response: Response) {
   const text = await response.text();
-  if (!text) {
-    return {};
-  }
-
+  if (!text) return {};
   try {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
@@ -33,131 +40,143 @@ async function parseJsonSafely(response: Response) {
   }
 }
 
-function Field({
-  label,
-  value,
-  placeholder,
-  disabled,
-  multiline,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  disabled?: boolean;
-  multiline?: boolean;
-  onChange: (value: string) => void;
-}) {
-  const className =
-    "mt-2 w-full rounded-2xl border border-white/8 bg-black/25 px-3 py-2.5 text-xs text-white outline-none placeholder:text-white/35 focus:border-white/20 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-white/35";
+// ─── Field type menu items ───────────────────────────────────────────────────
+const FIELD_TYPE_OPTIONS = [
+  { label: "Text", icon: AlignLeft, type: "text_field" as const },
+  { label: "Image", icon: ImageIcon, type: "image_field" as const },
+];
+
+// ─── Add-field dropdown ──────────────────────────────────────────────────────
+function AddFieldDropdown({ onAdd }: { onAdd: (type: "text_field" | "image_field") => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
 
   return (
-    <label className="block">
-      <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-secondary">{label}</span>
-      {multiline ? (
-        <textarea
-          className={cn(className, "min-h-24 resize-none")}
-          value={value}
-          placeholder={placeholder}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      ) : (
-        <input
-          className={className}
-          value={value}
-          placeholder={placeholder}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      )}
-    </label>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-secondary">{label}</span>
-      <select
-        className="mt-2 w-full rounded-2xl border border-white/8 bg-black/25 px-3 py-2.5 text-xs text-white outline-none focus:border-white/20"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="cursor-pointer flex h-8 w-8 items-center justify-center rounded-lg border border-[#e5e7eb] bg-[#f5f5f5] text-[#6b7280] hover:bg-[#ebebeb] transition-colors"
+        title="Add field"
       >
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    </label>
+        <Plus className="h-4 w-4" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-[calc(100%+4px)] z-50 w-44 rounded-xl border border-gray-200 bg-white py-1 shadow-xl">
+          {FIELD_TYPE_OPTIONS.map(({ label, icon: Icon, type }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => {
+                onAdd(type);
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-3 px-3 py-2 text-[13px] text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <Icon className="h-4 w-4 text-gray-400" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
-function NodeFrame({
+// ─── NodeShell ───────────────────────────────────────────────────────────────
+function NodeShell({
   id,
-  icon,
   title,
-  description,
-  running,
   children,
+  running,
+  headerRight,
+  icon,
+  nodeType,
 }: {
   id: string;
-  icon: React.ReactNode;
   title: string;
-  description: string;
-  running?: boolean;
   children: React.ReactNode;
+  running?: boolean;
+  headerRight?: React.ReactNode;
+  icon?: React.ReactNode;
+  nodeType?: string;
 }) {
-  const removeNode = useWorkflowStudioStore((state) => state.removeNode);
   const runSingleNode = useWorkflowStudioStore((state) => state.runSingleNode);
+  const removeNode = useWorkflowStudioStore((state) => state.removeNode);
+  const nodes = useWorkflowStudioStore((state) => state.nodes);
+  const node = nodes.find((item) => item.id === id);
+  const locked = node?.data.nodeType === "request" || node?.data.nodeType === "response";
+
+  const requestNodesCount = nodes.filter((n) => n.type === "request").length;
+  const isDeletable = node?.type === "request" ? requestNodesCount > 1 : node?.deletable !== false;
+
+  const glowStyle: React.CSSProperties =
+    nodeType === "request"
+      ? {
+          boxShadow:
+            "0 0 0 1px rgba(245,158,11,0.15), 0 4px 24px rgba(15,23,42,0.08), 0 0 32px rgba(245,158,11,0.12)",
+          borderColor: "rgba(245,158,11,0.3)",
+        }
+      : nodeType === "response"
+      ? {
+          boxShadow:
+            "0 0 0 1px rgba(34,197,94,0.15), 0 4px 24px rgba(15,23,42,0.08), 0 0 32px rgba(34,197,94,0.12)",
+          borderColor: "rgba(34,197,94,0.3)",
+        }
+      : {};
 
   return (
     <div
       className={cn(
-        "min-w-[280px] max-w-[320px] rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.02))] p-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl",
+        "relative w-[380px] min-w-[380px] rounded-2xl border bg-white shadow-[0_4px_24px_rgba(15,23,42,0.08)]",
+        nodeType === "request" ? "border-[rgba(245,158,11,0.3)]" : nodeType === "response" ? "border-[rgba(34,197,94,0.3)]" : "border-[#e8eaed]",
         running && "running-node",
       )}
+      style={{ overflow: "visible", ...glowStyle }}
     >
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/7 text-white">
-            {icon}
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-white">{title}</p>
-            <p className="mt-1 text-xs leading-5 text-secondary">{description}</p>
-          </div>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#f1f3f5]">
+        <div className="flex items-center gap-2">
+          {icon && (
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#f0f1ff] text-[#6366f1]">
+              {icon}
+            </div>
+          )}
+          <span className="text-[13px] font-semibold text-[#111827]">{title}</span>
+          <Info className="h-3.5 w-3.5 text-[#c4c9d4] cursor-pointer" />
         </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            aria-label={`Run ${title}`}
-            title="Run node"
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/8 text-white transition-colors hover:bg-white/14"
-            onClick={() => runSingleNode(id)}
-          >
-            <Play className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            aria-label={`Delete ${title}`}
-            title="Delete node"
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/8 text-secondary transition-colors hover:bg-red-500/18 hover:text-red-100"
-            onClick={() => removeNode(id)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+        <div className="flex items-center gap-1.5">
+          {headerRight}
+          {!locked && (
+            <button
+              type="button"
+              className="cursor-pointer flex h-7 items-center gap-1 rounded-md border border-[#d1fae5] bg-[#f0fdf4] px-2 text-[11px] font-semibold text-[#16a34a] hover:bg-[#dcfce7] transition-colors"
+              onClick={() => runSingleNode(id)}
+            >
+              <Play className="h-3 w-3 fill-current" />
+              Run
+            </button>
+          )}
+          {isDeletable && (
+            <button
+              type="button"
+              className="cursor-pointer flex h-7 w-7 items-center justify-center rounded-md bg-[#f5f5f5] text-[#9ca3af] hover:bg-[#efefef] hover:text-[#4b5563] transition-colors"
+              onClick={() => removeNode(id)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
       {children}
@@ -165,376 +184,574 @@ function NodeFrame({
   );
 }
 
-function TextNode({ id, data }: NodeProps) {
-  const typedData = data as TextNodeData;
-  const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
+// ─── InputLabel ──────────────────────────────────────────────────────────────
+function InputLabel({
+  label,
+  accent,
+}: {
+  label: string;
+  accent: "text" | "image" | "result" | "video" | "audio";
+}) {
+  const dotColor =
+    accent === "image" ? "bg-[#4f7cff]" :
+      accent === "result" ? "bg-[#22c55e]" :
+        accent === "video" ? "bg-[#a855f7]" :
+          accent === "audio" ? "bg-[#06b6d4]" :
+            "bg-[#f59e0b]";
+
   return (
-    <>
-      <Handle type="source" position={Position.Right} id="output" className="!h-3 !w-3 !border-0 !bg-white" />
-      <NodeFrame id={id} icon={<FileText className="h-5 w-5" />} title={typedData.label} description={typedData.description} running={typedData.running}>
-        <Field
-          label={typedData.role === "system" ? "System Prompt" : "Text Value"}
-          value={typedData.text}
-          multiline
-          onChange={(value) => updateNodeData(id, { text: value })}
-        />
-      </NodeFrame>
-    </>
+    <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wide">
+      <span className={cn("h-2 w-2 rounded-full flex-shrink-0", dotColor)} />
+      <span>{label}</span>
+    </div>
   );
 }
 
-function UploadImageNode({ id, data }: NodeProps) {
-  const typedData = data as UploadImageNodeData;
-  const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
+// ─── CopyButton ──────────────────────────────────────────────────────────────
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy text: ", err);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      disabled={!text}
+      className="cursor-pointer rounded p-1 hover:bg-[#e5e7eb] text-gray-400 hover:text-gray-600 transition-colors"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" strokeWidth={2.5} /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
+
+// ─── UploadField ─────────────────────────────────────────────────────────────
+function UploadField({
+  value,
+  onChange,
+  label = "Upload Image",
+  disabled = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label?: string;
+  disabled?: boolean;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function uploadFile(file: File) {
     if (file.size > MAX_UPLOAD_BYTES) {
       throw new Error("Images larger than 10 MB are not supported.");
     }
-
     const formData = new FormData();
     formData.set("file", file);
     formData.set("kind", "image");
-
     const response = await fetch("/api/uploads/transloadit", {
       method: "POST",
       body: formData,
     });
-
-    const payload = (await parseJsonSafely(response)) as { ok?: boolean; url?: string; fileName?: string; error?: string };
-
+    const payload = (await parseJsonSafely(response)) as { url?: string; error?: string };
     if (!response.ok || !payload.url) {
       throw new Error(payload.error || "Image upload failed.");
     }
-
-    return payload;
+    return payload.url;
   }
 
+  const isUrl = value && (value.startsWith("http") || value.startsWith("data:"));
+
   return (
-    <>
-      <Handle type="source" position={Position.Right} id="output" className="!h-3 !w-3 !border-0 !bg-white" />
-      <NodeFrame id={id} icon={<ImageIcon className="h-5 w-5" />} title={typedData.label} description={typedData.description} running={typedData.running}>
-        {typedData.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={typedData.imageUrl} alt={typedData.fileName ?? "Uploaded preview"} className="mb-3 h-36 w-full rounded-[22px] object-cover" />
-        ) : (
-          <div className="mb-3 flex h-36 items-center justify-center rounded-[22px] border border-dashed border-white/10 bg-black/20 text-xs text-secondary">
-            Upload an image or paste a URL
-          </div>
-        )}
+    <div className={cn("rounded-lg border border-[#e5e7eb] bg-[#fafafa] overflow-hidden", disabled && "opacity-75")}>
+      {/* Preview if image is set */}
+      {isUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={value}
+          alt="Uploaded"
+          className="w-full max-h-40 object-cover border-b border-[#e5e7eb]"
+        />
+      )}
+      <div className="flex items-center gap-2 p-2">
         <button
           type="button"
-          className="mb-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-white/12"
+          disabled={disabled}
+          className="cursor-pointer flex flex-1 h-8 items-center justify-center gap-1.5 rounded-md border border-dashed border-[#d1d5db] bg-white px-3 text-[11px] font-medium text-[#6b7280] hover:border-[#6366f1] hover:text-[#6366f1] transition-colors disabled:opacity-40 disabled:pointer-events-none"
           onClick={() => fileRef.current?.click()}
         >
-          <Upload className="h-4 w-4" />
-          Upload Image
+          <Upload className="h-3.5 w-3.5" />
+          {label}
         </button>
         <input
           ref={fileRef}
           type="file"
+          disabled={disabled}
           accept="image/png,image/jpeg,image/webp,image/gif"
           className="hidden"
           onChange={async (event) => {
             const file = event.target.files?.[0];
-            if (!file) {
-              return;
-            }
-
+            if (!file) return;
+            // Show local preview immediately
+            const localUrl = URL.createObjectURL(file);
+            onChange(localUrl);
             try {
-              updateNodeData(id, { result: "Uploading image..." });
-              const uploaded = await uploadFile(file);
-              updateNodeData(id, {
-                fileName: uploaded.fileName ?? file.name,
-                imageUrl: uploaded.url,
-                result: "Image uploaded successfully.",
-              });
-            } catch (error) {
-              updateNodeData(id, {
-                result: error instanceof Error ? error.message : "Image upload failed.",
-              });
+              const url = await uploadFile(file);
+              onChange(url);
             } finally {
               event.target.value = "";
             }
           }}
         />
-        {typedData.result ? <p className="mb-3 text-xs leading-6 text-secondary">{typedData.result}</p> : null}
-        <Field label="Image URL" value={typedData.imageUrl ?? ""} onChange={(value) => updateNodeData(id, { imageUrl: value })} />
-      </NodeFrame>
-    </>
+      </div>
+      <input
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={disabled ? "Image is provided by incoming connection" : "Image URL..."}
+        className="w-full border-t border-[#e5e7eb] bg-white px-3 py-2 text-[11px] text-[#111827] outline-none placeholder:text-[#c0c4cc] focus:border-t-[#c7d2fe] disabled:opacity-50"
+      />
+    </div>
   );
 }
 
-function UploadVideoNode({ id, data }: NodeProps) {
-  const typedData = data as UploadVideoNodeData;
-  const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  async function uploadFile(file: File) {
-    if (file.size > MAX_UPLOAD_BYTES) {
-      throw new Error("Videos larger than 10 MB are not supported.");
-    }
-
-    const formData = new FormData();
-    formData.set("file", file);
-    formData.set("kind", "video");
-
-    const response = await fetch("/api/uploads/transloadit", {
-      method: "POST",
-      body: formData,
-    });
-
-    const payload = (await parseJsonSafely(response)) as { ok?: boolean; url?: string; fileName?: string; error?: string };
-
-    if (!response.ok || !payload.url) {
-      throw new Error(payload.error || "Video upload failed.");
-    }
-
-    return payload;
-  }
+// ─── Slider input row ─────────────────────────────────────────────────────────
+function SliderRow({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const num = parseFloat(value) || 0;
 
   return (
-    <>
-      <Handle type="source" position={Position.Right} id="output" className="!h-3 !w-3 !border-0 !bg-white" />
-      <NodeFrame id={id} icon={<Video className="h-5 w-5" />} title={typedData.label} description={typedData.description} running={typedData.running}>
-        {typedData.videoUrl ? <video className="mb-3 h-36 w-full rounded-[22px] object-cover" src={typedData.videoUrl} controls muted /> : null}
-        <button
-          type="button"
-          className="mb-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-white/12"
-          onClick={() => fileRef.current?.click()}
-        >
-          <Upload className="h-4 w-4" />
-          Upload Video
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="video/mp4,video/webm,video/quicktime"
-          className="hidden"
-          onChange={async (event) => {
-            const file = event.target.files?.[0];
-            if (!file) {
-              return;
-            }
-
-            try {
-              updateNodeData(id, { result: "Uploading video..." });
-              const uploaded = await uploadFile(file);
-              updateNodeData(id, {
-                fileName: uploaded.fileName ?? file.name,
-                videoUrl: uploaded.url,
-                result: "Video uploaded successfully.",
-              });
-            } catch (error) {
-              updateNodeData(id, {
-                result: error instanceof Error ? error.message : "Video upload failed.",
-              });
-            } finally {
-              event.target.value = "";
-            }
-          }}
-        />
-        {typedData.result ? <p className="mb-3 text-xs leading-6 text-secondary">{typedData.result}</p> : null}
-        <Field label="Video URL" value={typedData.videoUrl ?? ""} onChange={(value) => updateNodeData(id, { videoUrl: value })} />
-      </NodeFrame>
-    </>
+    <div className="flex items-center gap-2">
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={num}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="nodrag flex-1 h-1.5 accent-[#6366f1] cursor-pointer disabled:opacity-40"
+      />
+      <input
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="nodrag w-14 rounded-lg border border-[#e5e7eb] bg-white px-2 py-1 text-center text-[12px] font-medium text-[#111827] outline-none disabled:opacity-40"
+      />
+    </div>
   );
 }
 
-function RunLlmNode({ id, data }: NodeProps) {
-  const typedData = data as RunLlmNodeData;
+// ─── RequestNode ─────────────────────────────────────────────────────────────
+function RequestNode({ id, data }: NodeProps) {
+  const typedData = data as RequestNodeData;
+  const addRequestField = useWorkflowStudioStore((state) => state.addRequestField);
+  const updateRequestField = useWorkflowStudioStore((state) => state.updateRequestField);
+  const removeRequestField = useWorkflowStudioStore((state) => state.removeRequestField);
+
+  return (
+    <NodeShell
+      id={id}
+      title="Request-Inputs"
+      running={typedData.running}
+      nodeType="request"
+      headerRight={
+        <AddFieldDropdown onAdd={(type) => addRequestField(id, type)} />
+      }
+    >
+      <div className="space-y-3 px-4 py-3">
+        {typedData.fields.map((field) => {
+          const isImage = field.type === "image_field";
+          return (
+            <div key={field.id} className="relative">
+              {/* Field header row */}
+              <div className="mb-1.5 flex items-center gap-2">
+                <GripVertical className="h-3.5 w-3.5 text-[#d1d5db] cursor-grab" />
+                <input
+                  value={field.label}
+                  onChange={(event) => updateRequestField(id, field.id, { label: event.target.value })}
+                  className="min-w-0 flex-1 bg-transparent text-[12px] font-medium text-[#374151] outline-none"
+                />
+                <Info className="h-3 w-3 text-[#d1d5db]" />
+                <Pencil className="h-3 w-3 text-[#d1d5db] cursor-pointer hover:text-[#6b7280]" />
+                <button
+                  type="button"
+                  className="cursor-pointer rounded p-0.5 text-[#d1d5db] hover:text-[#ef4444] transition-colors"
+                  onClick={() => removeRequestField(id, field.id)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {isImage ? (
+                <UploadField
+                  value={field.value}
+                  onChange={(value) => updateRequestField(id, field.id, { value })}
+                />
+              ) : (
+                <textarea
+                  rows={2}
+                  value={field.value}
+                  onChange={(event) => updateRequestField(id, field.id, { value: event.target.value })}
+                  placeholder="Enter text..."
+                  className="w-full resize-none rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-[12px] text-[#111827] outline-none placeholder:text-[#c0c4cc] focus:border-[#c7d2fe] focus:bg-white transition-colors nowheel nodrag custom-scrollbar"
+                />
+              )}
+
+              {/* Source handle — centered in this field's div */}
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={field.id}
+                className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+                style={{
+                  right: -23,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: isImage ? "#4f7cff" : "#f59e0b",
+                  borderColor: isImage ? "rgba(79,124,255,0.4)" : "rgba(245,158,11,0.4)",
+                  boxShadow: isImage
+                    ? "0 0 8px rgba(79,124,255,0.3)"
+                    : "0 0 8px rgba(245,158,11,0.3)",
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </NodeShell>
+  );
+}
+
+// ─── GeminiNode ──────────────────────────────────────────────────────────────
+function GeminiNode({ id, data }: NodeProps) {
+  const typedData = data as GeminiNodeData;
   const edges = useWorkflowStudioStore((state) => state.edges);
   const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
-  const connectedImages = typedData.connectedImages ?? [];
-  const userMessageConnected = isInputConnected(edges, id, "user_message");
-  const systemPromptConnected = isInputConnected(edges, id, "system_prompt");
-  const hasImageInputs = connectedImages.length > 0;
 
   return (
     <>
-      <Handle type="target" position={Position.Left} id="system_prompt" style={{ top: 76 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="user_message" style={{ top: 140 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="images" style={{ top: 204 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="source" position={Position.Right} id="output" className="!h-3 !w-3 !border-0 !bg-white" />
-      <NodeFrame id={id} icon={<Bot className="h-5 w-5" />} title={typedData.label} description={typedData.description} running={typedData.running}>
-        <SelectField label="Model" value={typedData.model} options={llmModels} onChange={(value) => updateNodeData(id, { model: value })} />
-        <Field
-          label="System Prompt"
-          value={typedData.systemPrompt}
-          placeholder="Connected text node or inline system prompt"
-          disabled={systemPromptConnected}
-          multiline
-          onChange={(value) => updateNodeData(id, { systemPrompt: value })}
-        />
-        <Field
-          label="User Message"
-          value={typedData.userMessage}
-          placeholder="Connected text node or inline message"
-          disabled={userMessageConnected}
-          multiline
-          onChange={(value) => updateNodeData(id, { userMessage: value })}
-        />
-        <div className="mt-4 rounded-[22px] border border-white/8 bg-black/25 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-secondary">Image Inputs</p>
-            <span className="rounded-full bg-white/8 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/80">
-              {connectedImages.length}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-6 text-secondary">
-            {hasImageInputs ? "Connected images will be passed to the LLM during execution." : "Connect one or more image nodes here if the prompt needs visual context."}
-          </p>
-          {hasImageInputs ? (
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              {connectedImages.slice(0, 6).map((imageUrl, index) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={`${imageUrl}-${index}`} src={imageUrl} alt={`Connected input ${index + 1}`} className="h-16 w-full rounded-2xl object-cover" />
-              ))}
+      <NodeShell id={id} title="Gemini 2.5 Flash" running={typedData.running}>
+        <div className="space-y-3 px-4 py-3">
+          {/* Prompt */}
+          <div className="relative overflow-visible">
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="prompt"
+              className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+              style={{
+                left: -23,
+                top: 8,
+                transform: "translateY(-50%)",
+                background: "#f59e0b",
+                borderColor: "rgba(245,158,11,0.4)",
+                boxShadow: "0 0 8px rgba(245,158,11,0.3)",
+              }}
+            />
+            <InputLabel label="Prompt*" accent="text" />
+            <div className="relative">
+              <textarea
+                rows={3}
+                value={typedData.prompt}
+                disabled={isInputConnected(edges, id, "prompt")}
+                onChange={(event) => updateNodeData(id, { prompt: event.target.value })}
+                placeholder="Enter your prompt..."
+                className="w-full resize-none rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-[12px] text-[#111827] outline-none placeholder:text-[#c0c4cc] disabled:opacity-50 focus:border-[#c7d2fe] focus:bg-white transition-colors nowheel nodrag custom-scrollbar max-h-24 overflow-y-auto"
+              />
+              <button type="button" className="absolute bottom-2 right-2 text-[#d1d5db] hover:text-[#6b7280]">
+                <Plus className="h-3.5 w-3.5" />
+              </button>
             </div>
-          ) : null}
-        </div>
-        {!typedData.userMessage.trim() ? (
-          <div className="mt-4 rounded-[22px] border border-amber-400/20 bg-amber-500/10 p-3 text-xs leading-6 text-amber-100">
-            {userMessageConnected
-              ? "A text node must be connected to the user message input before this node can run."
-              : "User message is required. Add it inline or connect a text node to the user message input."}
           </div>
-        ) : null}
-        <div className="mt-4 rounded-[22px] border border-white/8 bg-black/25 p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-secondary">Inline Result</p>
-          <p className="mt-2 line-clamp-5 overflow-hidden text-xs leading-6 text-white/90">
-            {typedData.result ?? "Run this node to render the LLM response inline."}
-          </p>
+
+          {/* System Prompt */}
+          <div className="relative overflow-visible">
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="system_prompt"
+              className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+              style={{
+                left: -23,
+                top: 8,
+                transform: "translateY(-50%)",
+                background: "#f59e0b",
+                borderColor: "rgba(245,158,11,0.4)",
+                boxShadow: "0 0 8px rgba(245,158,11,0.3)",
+              }}
+            />
+            <InputLabel label="System Prompt" accent="text" />
+            <div className="relative">
+              <textarea
+                rows={3}
+                value={typedData.systemPrompt}
+                disabled={isInputConnected(edges, id, "system_prompt")}
+                onChange={(event) => updateNodeData(id, { systemPrompt: event.target.value })}
+                placeholder="You are a helpful assistant..."
+                className="w-full resize-none rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-[12px] text-[#111827] outline-none placeholder:text-[#c0c4cc] disabled:opacity-50 focus:border-[#c7d2fe] focus:bg-white transition-colors nowheel nodrag custom-scrollbar max-h-24 overflow-y-auto"
+              />
+              <button type="button" className="absolute bottom-2 right-2 text-[#d1d5db] hover:text-[#6b7280]">
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Image Vision */}
+          <div className="relative overflow-visible">
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="image_vision"
+              className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+              style={{
+                left: -23,
+                top: 8,
+                transform: "translateY(-50%)",
+                background: "#4f7cff",
+                borderColor: "rgba(79,124,255,0.4)",
+                boxShadow: "0 0 8px rgba(79,124,255,0.3)",
+              }}
+            />
+            <InputLabel label="Image (Vision)" accent="image" />
+            <UploadField
+              value={typedData.imageInput || ""}
+              disabled={isInputConnected(edges, id, "image_vision")}
+              onChange={(value) => updateNodeData(id, { imageInput: value })}
+            />
+          </div>
+
+          {/* Response output */}
+          <div className="relative overflow-visible border-t border-[#f1f3f5] pt-3">
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="output"
+              className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+              style={{
+                right: -23,
+                top: 20,
+                transform: "translateY(-50%)",
+                background: "#22c55e",
+                borderColor: "rgba(34,197,94,0.4)",
+                boxShadow: "0 0 8px rgba(34,197,94,0.3)",
+              }}
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-[#6b7280] uppercase tracking-wide">Response</span>
+              {typedData.response && <CopyButton text={typedData.response} />}
+            </div>
+            <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-3 text-[11px] text-[#4b5563] break-words whitespace-pre-wrap nowheel nodrag custom-scrollbar">
+              {typedData.response || "No output yet"}
+            </div>
+          </div>
         </div>
-      </NodeFrame>
+      </NodeShell>
     </>
   );
 }
 
-function GenerateImageNode({ id, data }: NodeProps) {
-  const typedData = data as GenerateImageNodeData;
-  const edges = useWorkflowStudioStore((state) => state.edges);
-  const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
-  const connectedImages = typedData.connectedImages ?? [];
-  const userMessageConnected = isInputConnected(edges, id, "user_message");
-  const systemPromptConnected = isInputConnected(edges, id, "system_prompt");
-
-  return (
-    <>
-      <Handle type="target" position={Position.Left} id="system_prompt" style={{ top: 76 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="user_message" style={{ top: 140 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="images" style={{ top: 204 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="source" position={Position.Right} id="output" className="!h-3 !w-3 !border-0 !bg-white" />
-      <NodeFrame id={id} icon={<ImageIcon className="h-5 w-5" />} title={typedData.label} description={typedData.description} running={typedData.running}>
-        <SelectField label="Model" value={typedData.model} options={imageModels} onChange={(value) => updateNodeData(id, { model: value })} />
-        <Field
-          label="Style / System Prompt"
-          value={typedData.systemPrompt}
-          placeholder="Optional connected text node or inline style guidance"
-          disabled={systemPromptConnected}
-          multiline
-          onChange={(value) => updateNodeData(id, { systemPrompt: value })}
-        />
-        <Field
-          label="Prompt"
-          value={typedData.userMessage}
-          placeholder="Describe the image you want to generate"
-          disabled={userMessageConnected}
-          multiline
-          onChange={(value) => updateNodeData(id, { userMessage: value })}
-        />
-        <div className="mt-4 rounded-[22px] border border-white/8 bg-black/25 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-secondary">Reference Images</p>
-            <span className="rounded-full bg-white/8 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/80">
-              {connectedImages.length}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-6 text-secondary">
-            {connectedImages.length
-              ? "Connected images will be used as references for the generated result."
-              : "Connect one or more images here for restyling or reference-guided generation."}
-          </p>
-          {connectedImages.length ? (
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              {connectedImages.slice(0, 6).map((imageUrl, index) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={`${imageUrl}-${index}`} src={imageUrl} alt={`Reference ${index + 1}`} className="h-16 w-full rounded-2xl object-cover" />
-              ))}
-            </div>
-          ) : null}
-        </div>
-        {!typedData.userMessage.trim() ? (
-          <div className="mt-4 rounded-[22px] border border-amber-400/20 bg-amber-500/10 p-3 text-xs leading-6 text-amber-100">
-            {userMessageConnected ? "A text node must be connected to the prompt input before this node can run." : "Prompt is required."}
-          </div>
-        ) : null}
-        <div className="mt-4 rounded-[22px] border border-white/8 bg-black/25 p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-secondary">Generated Image</p>
-          {typedData.result ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={typedData.result} alt="Generated output" className="mt-3 h-40 w-full rounded-[20px] object-cover" />
-          ) : (
-            <p className="mt-2 text-xs leading-6 text-white/90">Run this node to generate an image inline.</p>
-          )}
-        </div>
-      </NodeFrame>
-    </>
-  );
-}
-
+// ─── CropImageNode ────────────────────────────────────────────────────────────
 function CropImageNode({ id, data }: NodeProps) {
   const typedData = data as CropImageNodeData;
   const edges = useWorkflowStudioStore((state) => state.edges);
   const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
+
+  const cropParams: Array<[string, keyof CropImageNodeData, string]> = [
+    ["X Position (%)", "xPercent", "x_percent"],
+    ["Y Position (%)", "yPercent", "y_percent"],
+    ["Width (%)", "widthPercent", "width_percent"],
+    ["Height (%)", "heightPercent", "height_percent"],
+  ];
+
   return (
     <>
-      <Handle type="target" position={Position.Left} id="image_url" style={{ top: 92 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="x_percent" style={{ top: 162 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="y_percent" style={{ top: 224 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="width_percent" style={{ top: 286 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="height_percent" style={{ top: 348 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="source" position={Position.Right} id="output" className="!h-3 !w-3 !border-0 !bg-white" />
-      <NodeFrame id={id} icon={<Crop className="h-5 w-5" />} title={typedData.label} description={typedData.description} running={typedData.running}>
-        <Field label="Image URL" value={typedData.imageUrl} disabled={isInputConnected(edges, id, "image_url")} onChange={(value) => updateNodeData(id, { imageUrl: value })} />
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <Field label="X %" value={typedData.xPercent} disabled={isInputConnected(edges, id, "x_percent")} onChange={(value) => updateNodeData(id, { xPercent: value })} />
-          <Field label="Y %" value={typedData.yPercent} disabled={isInputConnected(edges, id, "y_percent")} onChange={(value) => updateNodeData(id, { yPercent: value })} />
-          <Field label="Width %" value={typedData.widthPercent} disabled={isInputConnected(edges, id, "width_percent")} onChange={(value) => updateNodeData(id, { widthPercent: value })} />
-          <Field label="Height %" value={typedData.heightPercent} disabled={isInputConnected(edges, id, "height_percent")} onChange={(value) => updateNodeData(id, { heightPercent: value })} />
+      <NodeShell id={id} title="Crop Image" running={typedData.running}>
+        <div className="space-y-3 px-4 py-3">
+          {/* Input image */}
+          <div className="relative overflow-visible">
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="input_image"
+              className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+              style={{
+                left: -23,
+                top: 8,
+                transform: "translateY(-50%)",
+                background: "#4f7cff",
+                borderColor: "rgba(79,124,255,0.4)",
+                boxShadow: "0 0 8px rgba(79,124,255,0.3)",
+              }}
+            />
+            <InputLabel label="Input Image*" accent="image" />
+            <UploadField
+              value={typedData.imageUrl}
+              onChange={(value) => updateNodeData(id, { imageUrl: value })}
+            />
+          </div>
+
+          {/* Slider rows for each crop param */}
+          {cropParams.map(([label, key, handle]) => (
+            <div key={key} className="relative overflow-visible">
+              <Handle
+                type="target"
+                position={Position.Left}
+                id={handle}
+                className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+                style={{
+                  left: -23,
+                  top: 8,
+                  transform: "translateY(-50%)",
+                  background: "#ec4899",
+                  borderColor: "rgba(236,72,153,0.4)",
+                  boxShadow: "0 0 8px rgba(236,72,153,0.3)",
+                }}
+              />
+              <InputLabel label={label} accent="text" />
+              <SliderRow
+                label={label}
+                value={typedData[key] as string}
+                disabled={isInputConnected(edges, id, handle)}
+                onChange={(v) => updateNodeData(id, { [key]: v } as Partial<CropImageNodeData>)}
+              />
+            </div>
+          ))}
+
+          {/* Output image */}
+          <div className="relative overflow-visible border-t border-[#f1f3f5] pt-3">
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="output_image"
+              className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+              style={{
+                right: -23,
+                top: 20,
+                transform: "translateY(-50%)",
+                background: "#4f7cff",
+                borderColor: "rgba(79,124,255,0.4)",
+                boxShadow: "0 0 8px rgba(79,124,255,0.3)",
+              }}
+            />
+            <span className="text-[11px] font-semibold text-[#6b7280] uppercase tracking-wide">Output Image</span>
+            <div className="relative mt-2 min-h-20 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] overflow-hidden">
+              {typedData.outputImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={typedData.outputImage} alt="Crop output" className="w-full object-cover" />
+              ) : (
+                <div className="flex h-20 items-center justify-center text-[11px] text-[#c0c4cc]">
+                  No output yet
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </NodeFrame>
+      </NodeShell>
     </>
   );
 }
 
-function ExtractFrameNode({ id, data }: NodeProps) {
-  const typedData = data as ExtractFrameNodeData;
-  const edges = useWorkflowStudioStore((state) => state.edges);
-  const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
+// ─── ResponseNode ─────────────────────────────────────────────────────────────
+function ResponseNode({ id, data }: NodeProps) {
+  const typedData = data as ResponseNodeData;
+
   return (
     <>
-      <Handle type="target" position={Position.Left} id="video_url" style={{ top: 98 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="target" position={Position.Left} id="timestamp" style={{ top: 162 }} className="!h-3 !w-3 !border-0 !bg-white" />
-      <Handle type="source" position={Position.Right} id="output" className="!h-3 !w-3 !border-0 !bg-white" />
-      <NodeFrame id={id} icon={<Film className="h-5 w-5" />} title={typedData.label} description={typedData.description} running={typedData.running}>
-        <Field label="Video URL" value={typedData.videoUrl} disabled={isInputConnected(edges, id, "video_url")} onChange={(value) => updateNodeData(id, { videoUrl: value })} />
-        <Field label="Timestamp" value={typedData.timestamp} disabled={isInputConnected(edges, id, "timestamp")} onChange={(value) => updateNodeData(id, { timestamp: value })} />
-        <div className="mt-4 rounded-[22px] border border-white/8 bg-black/25 p-3 text-xs leading-6 text-secondary">
-          Use seconds like <span className="text-white">3.5</span> or percentages like <span className="text-white">50%</span>.
+      <NodeShell
+        id={id}
+        title="Response"
+        running={typedData.running}
+        nodeType="response"
+        icon={<FileOutput className="h-4 w-4" />}
+      >
+        {/* Handle flush with node border */}
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="result"
+          className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+          style={{
+            left: -7,
+            top: "50%",
+            transform: "translateY(-50%)",
+            background: "#6366f1",
+            borderColor: "rgba(99,102,241,0.4)",
+            boxShadow: "0 0 8px rgba(99,102,241,0.3)",
+          }}
+        />
+
+        <div className="space-y-3 p-4">
+          <div className="space-y-2">
+            {typedData.items.length === 0 ? (
+              <div className="rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3 text-center text-[11px] text-[#c0c4cc]">
+                Connect node outputs here to define what your workflow returns.
+              </div>
+            ) : (
+              typedData.items.map((item) => {
+                const isImageUrl =
+                  typeof item.value === "string" &&
+                  (/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(item.value) ||
+                    (item.value.startsWith("http") && item.value.includes("unsplash")));
+                return (
+                  <div key={item.id} className="rounded-xl border border-[#e5e7eb] bg-white p-3 shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="min-w-0 flex-1 text-[13px] font-medium text-[#111827]">
+                        {item.sourceNodeLabel}
+                      </span>
+                      <Pencil className="h-3.5 w-3.5 text-[#c4c9d4] cursor-pointer hover:text-[#6b7280]" />
+                      <Trash2 className="h-3.5 w-3.5 text-[#c4c9d4] cursor-pointer hover:text-[#ef4444]" />
+                    </div>
+                    {item.value && isImageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={item.value}
+                        alt={item.sourceNodeLabel}
+                        className="w-full rounded-lg object-cover max-h-48 border border-[#e5e7eb]"
+                      />
+                    ) : (
+                      <div className="relative">
+                        <div className="max-h-48 overflow-y-auto rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-[11px] text-[#4b5563] break-words whitespace-pre-wrap pr-10 min-h-10 flex items-start nowheel nodrag custom-scrollbar">
+                          <span className={cn(!item.value && "text-[#c0c4cc] flex-1 text-center self-center")}>
+                            {item.value || "No output yet"}
+                          </span>
+                        </div>
+                        {item.value && (
+                          <div className="absolute right-2 top-2">
+                            <CopyButton text={item.value} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
-      </NodeFrame>
+      </NodeShell>
     </>
   );
 }
 
 export const nodeTypes = {
-  text: memo(TextNode),
-  uploadImage: memo(UploadImageNode),
-  uploadVideo: memo(UploadVideoNode),
-  runLLM: memo(RunLlmNode),
-  generateImage: memo(GenerateImageNode),
+  request: memo(RequestNode),
+  gemini: memo(GeminiNode),
   cropImage: memo(CropImageNode),
-  extractFrame: memo(ExtractFrameNode),
+  response: memo(ResponseNode),
 };

@@ -2,10 +2,25 @@
 
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type EdgeChange, type NodeChange } from "@xyflow/react";
 import { create } from "zustand";
-import { workflowTemplates } from "@/lib/workflow-sample";
-import { materializeMediaOutputs } from "@/lib/client-media";
-import { canConnect, createNodeTemplate, getIncomingValue, getIncomingValues } from "@/lib/workflow-utils";
-import type { WorkflowEdge, WorkflowNode, WorkflowNodeData, WorkflowNodeType, WorkflowRun, WorkflowRunScope } from "@/types/workflow";
+import { sampleEdges, sampleNodes, workflowTemplates } from "@/lib/workflow-sample";
+import {
+  buildResponseItems,
+  canConnect,
+  createBlankWorkflowNodes,
+  createNodeTemplate,
+  getIncomingValue,
+  resolveWorkflowNodes,
+  styleEdge,
+} from "@/lib/workflow-utils";
+import type {
+  RequestField,
+  WorkflowEdge,
+  WorkflowNode,
+  WorkflowNodeData,
+  WorkflowNodeType,
+  WorkflowRun,
+  WorkflowRunScope,
+} from "@/types/workflow";
 
 type Snapshot = {
   nodes: WorkflowNode[];
@@ -34,15 +49,20 @@ type WorkflowState = {
   undoStack: Snapshot[];
   redoStack: Snapshot[];
   initialize: () => void;
-  createWorkflow: () => void;
+  createWorkflow: () => string;
   selectWorkflow: (id: string) => void;
   deleteWorkflow: (id: string) => void;
+  duplicateWorkflow: (id: string) => string;
   renameWorkflow: (name: string) => void;
+  renameWorkflowById: (id: string, name: string) => void;
   loadSampleWorkflow: (templateId?: string) => void;
   onNodesChange: (changes: NodeChange[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (connection: Connection) => void;
   updateNodeData: (id: string, patch: Partial<WorkflowNodeData>) => void;
+  addRequestField: (nodeId: string, type: RequestField["type"]) => void;
+  updateRequestField: (nodeId: string, fieldId: string, patch: Partial<RequestField>) => void;
+  removeRequestField: (nodeId: string, fieldId: string) => void;
   addNode: (type: WorkflowNodeType) => void;
   addNodeAtPosition: (type: WorkflowNodeType, x: number, y: number) => void;
   removeNode: (id: string) => void;
@@ -52,33 +72,95 @@ type WorkflowState = {
   runSelected: () => Promise<void>;
   runSingleNode: (id: string) => Promise<void>;
   exportWorkflow: () => { nodes: WorkflowNode[]; edges: WorkflowEdge[] };
-  importWorkflow: (payload: { nodes: WorkflowNode[]; edges: WorkflowEdge[] }) => void;
+  importWorkflow: (name: string, nodes: WorkflowNode[], edges: WorkflowEdge[]) => string;
   undo: () => void;
   redo: () => void;
 };
 
-const STORAGE_KEY = "nextflow-studio-v3";
-const LEGACY_STORAGE_KEYS = ["nextflow-studio-v2"];
+const STORAGE_KEY = "nextflow-studio-v4";
 
-function emptyWorkflow(name: string): WorkflowRecord {
-  const now = new Date().toISOString();
-  return {
-    id: crypto.randomUUID(),
-    name,
-    nodes: [],
-    edges: [],
-    runs: [],
-    createdAt: now,
-    updatedAt: now,
-  };
+async function cropImageHelper(
+  imageUrl: string,
+  xPercent: string,
+  yPercent: string,
+  widthPercent: string,
+  heightPercent: string
+): Promise<string> {
+  if (typeof window === "undefined") return imageUrl;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Could not get canvas context"));
+          return;
+        }
+
+        const x = (parseFloat(xPercent) / 100) * img.width;
+        const y = (parseFloat(yPercent) / 100) * img.height;
+        const w = (parseFloat(widthPercent) / 100) * img.width;
+        const h = (parseFloat(heightPercent) / 100) * img.height;
+
+        canvas.width = w;
+        canvas.height = h;
+
+        ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+        const croppedDataUrl = canvas.toDataURL("image/png");
+        resolve(croppedDataUrl);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => {
+      reject(new Error("Failed to load image for cropping"));
+    };
+    img.src = imageUrl;
+  });
+}
+
+function clearTargetHandlesForEdges(nodes: WorkflowNode[], edgesToRemove: WorkflowEdge[]): WorkflowNode[] {
+  let nextNodes = [...nodes];
+  for (const edge of edgesToRemove) {
+    nextNodes = nextNodes.map((node) => {
+      if (node.id !== edge.target) return node;
+
+      // Use type-safe narrowing per node type to avoid union assignment errors
+      if (node.data.nodeType === "gemini") {
+        const geminiData = { ...node.data };
+        if (edge.targetHandle === "image_vision") geminiData.imageInput = "";
+        else if (edge.targetHandle === "prompt") geminiData.prompt = "";
+        else if (edge.targetHandle === "system_prompt") geminiData.systemPrompt = "";
+        return { ...node, data: geminiData };
+      }
+
+      if (node.data.nodeType === "cropImage") {
+        const cropData = { ...node.data };
+        if (edge.targetHandle === "input_image") {
+          cropData.imageUrl = "";
+          cropData.outputImage = "";
+        } else if (edge.targetHandle === "x_percent") {
+          cropData.xPercent = "0";
+        } else if (edge.targetHandle === "y_percent") {
+          cropData.yPercent = "0";
+        } else if (edge.targetHandle === "width_percent") {
+          cropData.widthPercent = "100";
+        } else if (edge.targetHandle === "height_percent") {
+          cropData.heightPercent = "100";
+        }
+        return { ...node, data: cropData };
+      }
+
+      return node;
+    }) as WorkflowNode[];
+  }
+  return nextNodes;
 }
 
 function sameIds(a: string[], b: string[]) {
-  if (a.length !== b.length) {
-    return false;
-  }
-
-  return a.every((value, index) => value === b[index]);
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function snapshot(state: WorkflowState): Snapshot {
@@ -88,14 +170,53 @@ function snapshot(state: WorkflowState): Snapshot {
   };
 }
 
+function finalizeGraph(nodes: WorkflowNode[], edges: WorkflowEdge[]) {
+  const styledEdges = edges.map((edge) => styleEdge(edge, nodes));
+  const resolvedNodes = resolveWorkflowNodes(nodes, styledEdges);
+
+  return {
+    nodes: resolvedNodes,
+    edges: styledEdges,
+  };
+}
+
+function createWorkflowRecord(name: string, variant: "sample" | "blank"): WorkflowRecord {
+  const now = new Date().toISOString();
+
+  if (variant === "sample") {
+    return {
+      id: crypto.randomUUID(),
+      name,
+      nodes: structuredClone(sampleNodes),
+      edges: structuredClone(sampleEdges),
+      runs: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  const blankNodes = createBlankWorkflowNodes();
+  const graph = finalizeGraph(blankNodes, []);
+
+  return {
+    id: crypto.randomUUID(),
+    name,
+    nodes: graph.nodes,
+    edges: graph.edges,
+    runs: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function hydrateWorkflow(workflow: WorkflowRecord) {
-  const nodes = resolveWorkflowNodes(workflow.nodes, workflow.edges);
+  const graph = finalizeGraph(workflow.nodes, workflow.edges);
 
   return {
     workflowName: workflow.name,
     currentWorkflowId: workflow.id,
-    nodes,
-    edges: workflow.edges,
+    nodes: graph.nodes,
+    edges: graph.edges,
     runs: workflow.runs,
     selectedRunId: workflow.runs[0]?.id,
     selectedNodeIds: [],
@@ -109,132 +230,16 @@ function persist(workflows: WorkflowRecord[], currentWorkflowId: string) {
     return;
   }
 
-  const payload = JSON.stringify({
-    workflows: workflows.map(createPersistableWorkflow),
-    currentWorkflowId,
-  });
-
-  try {
-    window.localStorage.setItem(STORAGE_KEY, payload);
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "QuotaExceededError") {
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          workflows: workflows.map((workflow) => ({
-            ...createPersistableWorkflow(workflow),
-            nodes: [],
-            edges: [],
-            runs: [],
-          })),
-          currentWorkflowId,
-        }),
-      );
-      return;
-    }
-
-    throw error;
-  }
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      workflows,
+      currentWorkflowId,
+    }),
+  );
 }
 
-function sanitizeStoredWorkflows(workflows: WorkflowRecord[]) {
-  return workflows.map((workflow) => ({
-    ...workflow,
-    runs: [],
-  }));
-}
-
-function stripTransientMedia(value?: string) {
-  if (!value) {
-    return value;
-  }
-
-  if (value.startsWith("data:") || value.startsWith("blob:")) {
-    return "";
-  }
-
-  return value;
-}
-
-function createPersistableNode(node: WorkflowNode): WorkflowNode {
-  switch (node.data.nodeType) {
-    case "uploadImage":
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          imageUrl: stripTransientMedia(node.data.imageUrl),
-          result: stripTransientMedia(node.data.result),
-        },
-      };
-    case "uploadVideo":
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          videoUrl: stripTransientMedia(node.data.videoUrl),
-          result: stripTransientMedia(node.data.result),
-        },
-      };
-    case "runLLM":
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          connectedImages: [],
-        },
-      };
-    case "generateImage":
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          connectedImages: [],
-          result: stripTransientMedia(node.data.result),
-        },
-      };
-    case "cropImage":
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          imageUrl: stripTransientMedia(node.data.imageUrl) ?? "",
-          result: stripTransientMedia(node.data.result),
-        },
-      };
-    case "extractFrame":
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          videoUrl: stripTransientMedia(node.data.videoUrl) ?? "",
-          result: stripTransientMedia(node.data.result),
-        },
-      };
-    default:
-      return node;
-  }
-}
-
-function createPersistableRun(run: WorkflowRun): WorkflowRun {
-  return {
-    ...run,
-    nodeRuns: run.nodeRuns.map((nodeRun) => ({
-      ...nodeRun,
-      output: stripTransientMedia(nodeRun.output),
-    })),
-  };
-}
-
-function createPersistableWorkflow(workflow: WorkflowRecord): WorkflowRecord {
-  return {
-    ...workflow,
-    nodes: workflow.nodes.map(createPersistableNode),
-    runs: workflow.runs.map(createPersistableRun).slice(0, 8),
-  };
-}
-
-function syncWorkflow(state: WorkflowState, next: { workflowName?: string; nodes?: WorkflowNode[]; edges?: WorkflowEdge[]; runs?: WorkflowRun[] }) {
+function syncWorkflow(state: WorkflowState, next: { workflowName?: string; nodes?: WorkflowNode[]; edges?: WorkflowEdge[]; runs?: WorkflowRun[] }, skipPersist = false) {
   const workflowName = next.workflowName ?? state.workflowName;
   const nodes = next.nodes ?? state.nodes;
   const edges = next.edges ?? state.edges;
@@ -246,15 +251,27 @@ function syncWorkflow(state: WorkflowState, next: { workflowName?: string; nodes
       ? {
           ...workflow,
           name: workflowName,
-          nodes,
-          edges,
-          runs,
+          nodes: structuredClone(nodes),
+          edges: structuredClone(edges),
+          runs: structuredClone(runs),
           updatedAt,
         }
       : workflow,
   );
 
-  persist(workflows, state.currentWorkflowId);
+  if (!skipPersist) {
+    persist(workflows, state.currentWorkflowId);
+    
+    // Save to DB in background
+    fetch(`/api/workflows/${state.currentWorkflowId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nodesJson: nodes,
+        edgesJson: edges,
+      }),
+    }).catch(err => console.error("Failed to sync workflow content to DB:", err));
+  }
 
   return {
     workflows,
@@ -265,198 +282,480 @@ function syncWorkflow(state: WorkflowState, next: { workflowName?: string; nodes
   };
 }
 
-function withResolvedInputs(nodes: WorkflowNode[], edges: WorkflowEdge[]) {
-  return nodes.map((node) => {
-    if (node.data.nodeType === "runLLM") {
-      const systemPrompt = getIncomingValue(edges, nodes, node.id, "system_prompt") ?? node.data.systemPrompt;
-      const userMessage = getIncomingValue(edges, nodes, node.id, "user_message") ?? node.data.userMessage;
-      const connectedImages = getIncomingValues(edges, nodes, node.id, "images");
+function formatRunSummary(scope: WorkflowRunScope, status: WorkflowRun["status"]) {
+  if (status === "failed") {
+    return "One or more nodes need required inputs before the workflow can complete.";
+  }
 
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          systemPrompt,
-          userMessage,
-          connectedImages,
-          validationError: userMessage.trim() ? undefined : "User message is required.",
-        },
-      };
-    }
+  if (scope === "single") {
+    return "Single node run completed.";
+  }
 
-    if (node.data.nodeType === "generateImage") {
-      const systemPrompt = getIncomingValue(edges, nodes, node.id, "system_prompt") ?? node.data.systemPrompt;
-      const userMessage = getIncomingValue(edges, nodes, node.id, "user_message") ?? node.data.userMessage;
-      const connectedImages = getIncomingValues(edges, nodes, node.id, "images");
+  if (scope === "selected") {
+    return "Selected nodes run completed.";
+  }
 
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          systemPrompt,
-          userMessage,
-          connectedImages,
-          validationError: userMessage.trim() ? undefined : "Prompt is required.",
-        },
-      };
-    }
-
-    if (node.data.nodeType === "cropImage") {
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          imageUrl: getIncomingValue(edges, nodes, node.id, "image_url") ?? node.data.imageUrl,
-          xPercent: getIncomingValue(edges, nodes, node.id, "x_percent") ?? node.data.xPercent,
-          yPercent: getIncomingValue(edges, nodes, node.id, "y_percent") ?? node.data.yPercent,
-          widthPercent: getIncomingValue(edges, nodes, node.id, "width_percent") ?? node.data.widthPercent,
-          heightPercent: getIncomingValue(edges, nodes, node.id, "height_percent") ?? node.data.heightPercent,
-        },
-      };
-    }
-
-    if (node.data.nodeType === "extractFrame") {
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          videoUrl: getIncomingValue(edges, nodes, node.id, "video_url") ?? node.data.videoUrl,
-          timestamp: getIncomingValue(edges, nodes, node.id, "timestamp") ?? node.data.timestamp,
-        },
-      };
-    }
-
-    return node;
-  });
+  return "Workflow run completed.";
 }
 
-function resolveWorkflowNodes(nodes: WorkflowNode[], edges: WorkflowEdge[]) {
-  return withResolvedInputs(nodes, edges);
+function buildLevels(nodes: WorkflowNode[], edges: WorkflowEdge[], targetIds?: string[]) {
+  const targetSet = targetIds?.length ? new Set(targetIds) : new Set(nodes.map((node) => node.id));
+  const activeNodes = nodes.filter((node) => targetSet.has(node.id));
+  const indegree = new Map(activeNodes.map((node) => [node.id, 0]));
+  const adjacency = new Map<string, string[]>();
+
+  for (const edge of edges) {
+    if (!targetSet.has(edge.source) || !targetSet.has(edge.target)) {
+      continue;
+    }
+
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
+    const list = adjacency.get(edge.source) ?? [];
+    list.push(edge.target);
+    adjacency.set(edge.source, list);
+  }
+
+  const queue = activeNodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id);
+  const levels: string[][] = [];
+
+  while (queue.length > 0) {
+    const currentLevel = [...queue];
+    levels.push(currentLevel);
+    queue.length = 0;
+
+    for (const id of currentLevel) {
+      for (const next of adjacency.get(id) ?? []) {
+        indegree.set(next, (indegree.get(next) ?? 1) - 1);
+        if ((indegree.get(next) ?? 0) === 0) {
+          queue.push(next);
+        }
+      }
+    }
+  }
+
+  return levels.length ? levels : [activeNodes.map((node) => node.id)];
 }
 
-function buildRequestFailureRun(
-  workflowId: string,
-  scope: WorkflowRunScope,
-  nodes: WorkflowNode[],
-  targetIds: string[] | undefined,
-  error: string,
-): WorkflowRun {
-  const activeIds = targetIds?.length ? new Set(targetIds) : new Set(nodes.map((node) => node.id));
-  const nodeRuns = nodes
-    .filter((node) => activeIds.has(node.id))
-    .map((node) => ({
+async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: WorkflowEdge[]) {
+  const started = Date.now();
+
+  if (node.data.nodeType === "request") {
+    return {
+      node,
+      run: {
+        nodeId: node.id,
+        nodeLabel: node.data.label,
+        nodeType: node.data.nodeType,
+        status: "success" as const,
+        executionMs: Date.now() - started,
+        inputs: node.data.fields.map((field) => field.label),
+      },
+    };
+  }
+
+  if (node.data.nodeType === "cropImage") {
+    const imageUrl = getIncomingValue(edges, nodes, node.id, "input_image") ?? node.data.imageUrl;
+    if (!imageUrl) {
+      return {
+        node: {
+          ...node,
+          data: {
+            ...node.data,
+            imageUrl,
+            outputImage: "",
+            running: false,
+          },
+        },
+        run: {
+          nodeId: node.id,
+          nodeLabel: node.data.label,
+          nodeType: node.data.nodeType,
+          status: "failed" as const,
+          executionMs: Date.now() - started,
+          inputs: ["Image input missing"],
+          error: "Input image is required.",
+        },
+      };
+    }
+
+    // 30+ second artificial delay (mandatory as per deliverables)
+    await new Promise((resolve) => setTimeout(resolve, 30000));
+
+    let outputImage = imageUrl;
+    try {
+      const xPercent = getIncomingValue(edges, nodes, node.id, "x_percent") ?? node.data.xPercent;
+      const yPercent = getIncomingValue(edges, nodes, node.id, "y_percent") ?? node.data.yPercent;
+      const widthPercent = getIncomingValue(edges, nodes, node.id, "width_percent") ?? node.data.widthPercent;
+      const heightPercent = getIncomingValue(edges, nodes, node.id, "height_percent") ?? node.data.heightPercent;
+
+      outputImage = await cropImageHelper(
+        imageUrl,
+        xPercent || "0",
+        yPercent || "0",
+        widthPercent || "100",
+        heightPercent || "100"
+      );
+    } catch (err) {
+      console.error("Failed to crop image dynamically:", err);
+      outputImage = imageUrl;
+    }
+
+    return {
+      node: {
+        ...node,
+        data: {
+          ...node.data,
+          imageUrl,
+          outputImage,
+          running: false,
+        },
+      },
+      run: {
+        nodeId: node.id,
+        nodeLabel: node.data.label,
+        nodeType: node.data.nodeType,
+        status: "success" as const,
+        executionMs: Date.now() - started,
+        inputs: [`x=${node.data.xPercent} y=${node.data.yPercent} w=${node.data.widthPercent} h=${node.data.heightPercent}`],
+        output: outputImage,
+      },
+    };
+  }
+
+  if (node.data.nodeType === "gemini") {
+    const prompt = getIncomingValue(edges, nodes, node.id, "prompt") ?? node.data.prompt;
+    const systemPrompt = getIncomingValue(edges, nodes, node.id, "system_prompt") ?? node.data.systemPrompt;
+    const imageInput = getIncomingValue(edges, nodes, node.id, "image_vision") ?? node.data.imageInput;
+
+    if (!prompt.trim()) {
+      return {
+        node: {
+          ...node,
+          data: {
+            ...node.data,
+            prompt,
+            systemPrompt,
+            imageInput,
+            response: "",
+            running: false,
+          },
+        },
+        run: {
+          nodeId: node.id,
+          nodeLabel: node.data.label,
+          nodeType: node.data.nodeType,
+          status: "failed" as const,
+          executionMs: Date.now() - started,
+          inputs: ["Prompt missing"],
+          error: "Prompt is required.",
+        },
+      };
+    }
+
+    let response = "";
+    let status: "success" | "failed" = "success";
+    let error: string | undefined;
+
+    try {
+      const res = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: node.data.model || "gemini-2.5-flash",
+          prompt,
+          systemPrompt: systemPrompt || undefined,
+          imageInput: imageInput || undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.ok) {
+        response = data.output || "";
+      } else {
+        status = "failed";
+        error = data.error || "Gemini API call failed.";
+        response = `Error: ${error}`;
+      }
+    } catch (err) {
+      status = "failed";
+      error = err instanceof Error ? err.message : "Network error calling Gemini API.";
+      response = `Error: ${error}`;
+    }
+
+    return {
+      node: {
+        ...node,
+        data: {
+          ...node.data,
+          prompt,
+          systemPrompt,
+          imageInput,
+          response,
+          running: false,
+        },
+      },
+      run: {
+        nodeId: node.id,
+        nodeLabel: node.data.label,
+        nodeType: node.data.nodeType,
+        status,
+        executionMs: Date.now() - started,
+        inputs: [prompt, imageInput ? "1 image connected" : "No image connected"],
+        output: response,
+        error,
+      },
+    };
+  }
+
+  const items = buildResponseItems(edges, nodes, node.id);
+  return {
+    node: {
+      ...node,
+      data: {
+        ...node.data,
+        items,
+        running: false,
+      },
+    },
+    run: {
       nodeId: node.id,
       nodeLabel: node.data.label,
       nodeType: node.data.nodeType,
-      status: "failed" as const,
-      executionMs: 0,
-      inputs: [node.data.description],
-      error,
-    }));
+      status: items.length ? ("success" as const) : ("failed" as const),
+      executionMs: Date.now() - started,
+      inputs: items.map((item) => item.sourceNodeLabel),
+      output: items[0]?.value,
+      error: items.length ? undefined : "Response node has no connected result.",
+    },
+  };
+}
+
+async function executeWorkflow(
+  scope: WorkflowRunScope,
+  targetIds: string[] | undefined,
+  state: WorkflowState,
+  onNodesChange: (nodes: WorkflowNode[]) => void
+) {
+  const startedAt = new Date();
+  let workingNodes = structuredClone(state.nodes);
+  const levels = buildLevels(workingNodes, state.edges, targetIds);
+  const activeSet = new Set(targetIds?.length ? targetIds : workingNodes.map((node) => node.id));
+  const nodes: WorkflowRun["nodes"] = [];
+
+  // Reset all nodes to running: false initially
+  workingNodes = workingNodes.map((node) => ({
+    ...node,
+    data: { ...node.data, running: false },
+  }));
+  onNodesChange(workingNodes);
+
+  for (const level of levels) {
+    // Mark only nodes in the current level as running: true
+    workingNodes = workingNodes.map((node) =>
+      level.includes(node.id)
+        ? { ...node, data: { ...node.data, running: true } }
+        : { ...node, data: { ...node.data, running: false } }
+    );
+    onNodesChange(workingNodes);
+
+    const levelRuns = await Promise.all(
+      level.map(async (id) => {
+        const node = workingNodes.find((item) => item.id === id);
+        if (!node) {
+          return undefined;
+        }
+
+        const executed = await executeNode(node, workingNodes, state.edges);
+        return { id, executed };
+      }),
+    );
+
+    // Apply executed data and clear running state for completed nodes
+    for (const result of levelRuns) {
+      if (!result) continue;
+      workingNodes = workingNodes.map((item) =>
+        item.id === result.id ? { ...result.executed.node, data: { ...result.executed.node.data, running: false } } : item
+      );
+      nodes.push(result.executed.run);
+    }
+    
+    workingNodes = resolveWorkflowNodes(workingNodes, state.edges);
+    onNodesChange(workingNodes);
+  }
+
+  const finishedNodes = resolveWorkflowNodes(
+    workingNodes.map((node) =>
+      activeSet.has(node.id)
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              running: false,
+            },
+          }
+        : node,
+    ),
+    state.edges,
+  );
+
+  const status = nodes.some((run) => run.status === "failed") ? "failed" : "success";
+
+  const run: WorkflowRun = {
+    id: `run-${crypto.randomUUID()}`,
+    workflowId: state.currentWorkflowId,
+    scope,
+    status,
+    startedAt: startedAt.toISOString(),
+    durationMs: Date.now() - startedAt.getTime(),
+    summary: formatRunSummary(scope, status),
+    nodes,
+  };
 
   return {
-    id: `run-${crypto.randomUUID()}`,
-    workflowId,
-    scope,
-    status: "failed",
-    startedAt: new Date().toISOString(),
-    durationMs: 0,
-    summary: error,
-    nodeRuns,
+    nodes: finishedNodes,
+    run,
   };
 }
 
 export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
-  const initial = emptyWorkflow("Workflow 1");
-
-  async function executeRun(scope: WorkflowRunScope, targetIds?: string[]) {
-    const state = get();
-    const response = await fetch("/api/workflows/run", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        workflowId: state.currentWorkflowId,
-        scope,
-        targetIds,
-        nodes: state.nodes,
-        edges: state.edges,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Workflow execution request failed.");
-    }
-
-    return (await response.json()) as {
-      ok: boolean;
-      run: WorkflowRun;
-      nodes: WorkflowNode[];
-    };
-  }
+  const initial = createWorkflowRecord("Simple LLM Generator", "sample");
 
   return {
     workflowName: initial.name,
     currentWorkflowId: initial.id,
     workflows: [initial],
-    nodes: [],
-    edges: [],
+    nodes: initial.nodes,
+    edges: initial.edges,
     runs: [],
     selectedRunId: undefined,
     selectedNodeIds: [],
     undoStack: [],
     redoStack: [],
 
-    initialize: () => {
+    initialize: async () => {
+      // 1. Immediately load workflows and active ID from localStorage (synchronously before any network fetches)
       const saved = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
+      let localWorkflows: WorkflowRecord[] = [];
+      let localCurrentId = "";
       if (saved) {
-        const parsed = JSON.parse(saved) as { workflows: WorkflowRecord[]; currentWorkflowId: string };
-        const workflows = parsed.workflows?.length ? parsed.workflows : [emptyWorkflow("Workflow 1")];
-        const selected = workflows.find((workflow) => workflow.id === parsed.currentWorkflowId) ?? workflows[0];
-
-        set({
-          workflows,
-          ...hydrateWorkflow(selected),
-        });
-        return;
+        try {
+          const parsed = JSON.parse(saved);
+          localWorkflows = parsed.workflows || [];
+          localCurrentId = parsed.currentWorkflowId || "";
+        } catch(e) {}
       }
 
-      for (const legacyKey of LEGACY_STORAGE_KEYS) {
-        const legacySaved = typeof window !== "undefined" ? window.localStorage.getItem(legacyKey) : null;
-        if (!legacySaved) {
-          continue;
+      // Check if there is a workflowId in the URL pathname
+      let urlWorkflowId = "";
+      if (typeof window !== "undefined") {
+        const match = window.location.pathname.match(/\/workflows\/([^\/]+)/);
+        if (match) {
+          urlWorkflowId = match[1];
         }
-
-        const parsed = JSON.parse(legacySaved) as { workflows: WorkflowRecord[]; currentWorkflowId: string };
-        const workflows = sanitizeStoredWorkflows(parsed.workflows?.length ? parsed.workflows : [emptyWorkflow("Workflow 1")]);
-        const selected = workflows.find((workflow) => workflow.id === parsed.currentWorkflowId) ?? workflows[0];
-
-        persist(workflows, selected.id);
-        set({
-          workflows,
-          ...hydrateWorkflow(selected),
-        });
-        return;
       }
 
-      persist([initial], initial.id);
-      set({
-        workflows: [initial],
-        ...hydrateWorkflow(initial),
-      });
+      const activeId = urlWorkflowId || localCurrentId;
+
+      if (localWorkflows.length > 0) {
+        const selected = localWorkflows.find((w) => w.id === activeId) || localWorkflows[0];
+        set({
+          workflows: localWorkflows,
+          ...hydrateWorkflow(selected),
+        });
+      }
+
+      // 2. Fetch the latest from the database in the background to sync
+      try {
+        const res = await fetch("/api/workflows");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ok && data.workflows) {
+            const dbWorkflows: WorkflowRecord[] = await Promise.all(data.workflows.map(async (w: any) => {
+              let runs = [];
+              try {
+                const runsRes = await fetch(`/api/workflows/${w.id}/runs`);
+                if (runsRes.ok) {
+                  const runsData = await runsRes.json();
+                  if (runsData.ok) runs = runsData.runs || [];
+                }
+              } catch(e) {}
+
+              return {
+                id: w.id,
+                name: w.name,
+                nodes: typeof w.nodesJson === 'string' ? JSON.parse(w.nodesJson) : w.nodesJson,
+                edges: typeof w.edgesJson === 'string' ? JSON.parse(w.edgesJson) : w.edgesJson,
+                runs,
+                createdAt: w.createdAt,
+                updatedAt: w.updatedAt,
+              };
+            }));
+
+            if (dbWorkflows.length > 0) {
+              const mergedWorkflows = [...dbWorkflows];
+              for (const lw of localWorkflows) {
+                if (!dbWorkflows.some((dw) => dw.id === lw.id)) {
+                  mergedWorkflows.push(lw);
+                }
+              }
+
+              const currentId = get().currentWorkflowId || activeId;
+              const selected = mergedWorkflows.find((w) => w.id === currentId) || mergedWorkflows[0];
+              
+              // Only re-hydrate if the current workflow changed (avoid flash for already-correct workflow)
+              const currentState = get();
+              const needsRehydrate = currentState.currentWorkflowId !== selected.id;
+              
+              set({
+                workflows: mergedWorkflows,
+                ...(needsRehydrate ? hydrateWorkflow(selected) : { runs: selected.runs }),
+              });
+              persist(mergedWorkflows, selected.id);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.error("DB initialize failed, falling back to localStorage:", e);
+      }
+
+      // Fallback if DB fetch is empty/failed and localStorage was also empty
+      if (localWorkflows.length === 0) {
+        persist([initial], initial.id);
+        set({
+          workflows: [initial],
+          ...hydrateWorkflow(initial),
+        });
+      }
     },
 
-    createWorkflow: () =>
+    createWorkflow: () => {
+      const workflow = createWorkflowRecord(`Workflow ${get().workflows.length + 1}`, "blank");
       set((state) => {
-        const workflow = emptyWorkflow(`Workflow ${state.workflows.length + 1}`);
         const workflows = [...state.workflows, workflow];
         persist(workflows, workflow.id);
+
+        // Save to DB in background
+        fetch("/api/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: workflow.id,
+            userId: "anonymous",
+            name: workflow.name,
+            nodesJson: workflow.nodes,
+            edgesJson: workflow.edges,
+          }),
+        }).catch(err => console.error("Failed to save new workflow to DB:", err));
+
         return {
           workflows,
           ...hydrateWorkflow(workflow),
         };
-      }),
+      });
+      return workflow.id;
+    },
 
     selectWorkflow: (id) =>
       set((state) => {
@@ -465,15 +764,14 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
         }
 
         const synced = syncWorkflow(state, {});
-        const workflows = synced.workflows;
-        const workflow = workflows.find((item) => item.id === id);
+        const workflow = synced.workflows.find((item) => item.id === id);
         if (!workflow) {
           return state;
         }
 
-        persist(workflows, workflow.id);
+        persist(synced.workflows, workflow.id);
         return {
-          workflows,
+          workflows: synced.workflows,
           ...hydrateWorkflow(workflow),
         };
       }),
@@ -481,39 +779,111 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
     deleteWorkflow: (id) =>
       set((state) => {
         const remaining = state.workflows.filter((workflow) => workflow.id !== id);
-        const workflows = remaining.length ? remaining : [emptyWorkflow("Workflow 1")];
+        const workflows = remaining.length ? remaining : [createWorkflowRecord("Workflow 1", "blank")];
         const nextWorkflow = workflows[0];
         persist(workflows, nextWorkflow.id);
+
+        // Delete from DB in background
+        fetch(`/api/workflows/${id}`, {
+          method: "DELETE",
+        }).catch(err => console.error("Failed to delete workflow from DB:", err));
+
         return {
           workflows,
           ...hydrateWorkflow(nextWorkflow),
         };
       }),
 
+    duplicateWorkflow: (id) => {
+      const state = get();
+      const source = state.workflows.find((w) => w.id === id);
+      if (!source) return "";
+
+      const newId = crypto.randomUUID();
+      const newName = `${source.name} Copy`;
+      const now = new Date().toISOString();
+      const duplicated: WorkflowRecord = {
+        id: newId,
+        name: newName,
+        nodes: structuredClone(source.nodes),
+        edges: structuredClone(source.edges),
+        runs: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      set((state) => {
+        const workflows = [...state.workflows, duplicated];
+        persist(workflows, state.currentWorkflowId);
+
+        // Save to DB in background
+        fetch("/api/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: duplicated.id,
+            userId: "anonymous",
+            name: duplicated.name,
+            nodesJson: duplicated.nodes,
+            edgesJson: duplicated.edges,
+          }),
+        }).catch(err => console.error("Failed to save duplicated workflow to DB:", err));
+
+        return { workflows };
+      });
+
+      return newId;
+    },
+
     renameWorkflow: (name) =>
       set((state) => {
         const trimmed = name.trim() || "Untitled workflow";
-        const synced = syncWorkflow(state, { workflowName: trimmed });
+        // Update in DB
+        fetch(`/api/workflows/${state.currentWorkflowId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed }),
+        }).catch(err => console.error("Failed to rename workflow in DB:", err));
+
+        return syncWorkflow(state, { workflowName: trimmed });
+      }),
+
+    renameWorkflowById: (id, name) =>
+      set((state) => {
+        const trimmed = name.trim() || "Untitled workflow";
+        const workflows = state.workflows.map((workflow) =>
+          workflow.id === id
+            ? { ...workflow, name: trimmed, updatedAt: new Date().toISOString() }
+            : workflow,
+        );
+        persist(workflows, state.currentWorkflowId);
+
+        // Update in DB
+        fetch(`/api/workflows/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed }),
+        }).catch(err => console.error("Failed to rename workflow in DB:", err));
+
         return {
-          ...synced,
+          workflows,
+          workflowName: state.currentWorkflowId === id ? trimmed : state.workflowName,
         };
       }),
 
     loadSampleWorkflow: (templateId) =>
       set((state) => {
         const template = workflowTemplates.find((item) => item.id === templateId) ?? workflowTemplates[0];
-        const nodes = resolveWorkflowNodes(structuredClone(template.nodes), structuredClone(template.edges));
-        const edges = structuredClone(template.edges);
-        const runs = structuredClone(template.runs);
+        const graph = finalizeGraph(structuredClone(template.nodes), structuredClone(template.edges));
         const synced = syncWorkflow(state, {
-          nodes,
-          edges,
-          runs,
           workflowName: template.name,
+          nodes: graph.nodes,
+          edges: graph.edges,
+          runs: [],
         });
         return {
           ...synced,
-          selectedRunId: runs[0]?.id,
+          selectedRunId: undefined,
           selectedNodeIds: [],
           undoStack: [],
           redoStack: [],
@@ -522,9 +892,19 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
 
     onNodesChange: (changes) =>
       set((state) => {
-        const nextNodes = applyNodeChanges(changes, state.nodes) as WorkflowNode[];
-        const nodes = resolveWorkflowNodes(nextNodes, state.edges);
-        const synced = syncWorkflow(state, { nodes });
+        const isDragging = changes.some((c) => c.type === "position" && (c as any).dragging === true);
+        const isSelectionOnly = changes.every((c) => c.type === "select");
+        const skipPersist = isDragging || isSelectionOnly;
+
+        const graph = finalizeGraph(applyNodeChanges(changes, state.nodes) as WorkflowNode[], state.edges);
+        const synced = syncWorkflow(state, graph, skipPersist);
+
+        if (skipPersist) {
+          return {
+            ...synced,
+          };
+        }
+
         return {
           ...synced,
           undoStack: [...state.undoStack, snapshot(state)],
@@ -534,9 +914,14 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
 
     onEdgesChange: (changes) =>
       set((state) => {
-        const edges = applyEdgeChanges(changes, state.edges);
-        const nodes = resolveWorkflowNodes(state.nodes, edges);
-        const synced = syncWorkflow(state, { nodes, edges });
+        const removedEdgeIds = changes
+          .filter((c) => c.type === "remove")
+          .map((c) => c.id);
+        const removedEdges = state.edges.filter((edge) => removedEdgeIds.includes(edge.id));
+        const cleanedNodes = clearTargetHandlesForEdges(state.nodes, removedEdges);
+
+        const graph = finalizeGraph(cleanedNodes, applyEdgeChanges(changes, state.edges));
+        const synced = syncWorkflow(state, graph);
         return {
           ...synced,
           undoStack: [...state.undoStack, snapshot(state)],
@@ -550,9 +935,15 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
           return state;
         }
 
-        const edges = addEdge({ ...connection, animated: true }, state.edges);
-        const nodes = resolveWorkflowNodes(state.nodes, edges);
-        const synced = syncWorkflow(state, { nodes, edges });
+        const nextEdge = styleEdge(
+          {
+            ...connection,
+            id: `edge-${crypto.randomUUID()}`,
+          } as WorkflowEdge,
+          state.nodes,
+        );
+        const graph = finalizeGraph(state.nodes, addEdge(nextEdge, state.edges));
+        const synced = syncWorkflow(state, graph);
         return {
           ...synced,
           undoStack: [...state.undoStack, snapshot(state)],
@@ -573,8 +964,8 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
               }
             : node,
         ) as WorkflowNode[];
-        const nodes = resolveWorkflowNodes(nextNodes, state.edges);
-        const synced = syncWorkflow(state, { nodes });
+        const graph = finalizeGraph(nextNodes, state.edges);
+        const synced = syncWorkflow(state, graph);
         return {
           ...synced,
           undoStack: [...state.undoStack, snapshot(state)],
@@ -582,203 +973,212 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
         };
       }),
 
+    addRequestField: (nodeId, type) =>
+      set((state) => {
+        const nextNodes = state.nodes.map((node) =>
+          node.id === nodeId && node.data.nodeType === "request"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  fields: [
+                    ...node.data.fields,
+                    {
+                      id: `field_${crypto.randomUUID()}`,
+                      type,
+                      label: type === "image_field" ? `image_field_${node.data.fields.length}` : `text_field_${node.data.fields.length}`,
+                      value: "",
+                    },
+                  ],
+                },
+              }
+            : node,
+        ) as WorkflowNode[];
+        const graph = finalizeGraph(nextNodes, state.edges);
+        const synced = syncWorkflow(state, graph);
+        return { ...synced, undoStack: [...state.undoStack, snapshot(state)], redoStack: [] };
+      }),
+
+    updateRequestField: (nodeId, fieldId, patch) =>
+      set((state) => {
+        const nextNodes = state.nodes.map((node) =>
+          node.id === nodeId && node.data.nodeType === "request"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  fields: node.data.fields.map((field) => (field.id === fieldId ? { ...field, ...patch } : field)),
+                },
+              }
+            : node,
+        ) as WorkflowNode[];
+        const graph = finalizeGraph(nextNodes, state.edges);
+        const synced = syncWorkflow(state, graph);
+        return { ...synced, undoStack: [...state.undoStack, snapshot(state)], redoStack: [] };
+      }),
+
+    removeRequestField: (nodeId, fieldId) =>
+      set((state) => {
+        const nextNodes = state.nodes.map((node) =>
+          node.id === nodeId && node.data.nodeType === "request"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  fields: node.data.fields.filter((field) => field.id !== fieldId),
+                },
+              }
+            : node,
+        ) as WorkflowNode[];
+        const edgesToRemove = state.edges.filter((edge) => edge.source === nodeId && edge.sourceHandle === fieldId);
+        const cleanedNodes = clearTargetHandlesForEdges(nextNodes, edgesToRemove);
+        const nextEdges = state.edges.filter((edge) => !(edge.source === nodeId && edge.sourceHandle === fieldId));
+        const graph = finalizeGraph(cleanedNodes, nextEdges);
+        const synced = syncWorkflow(state, graph);
+        return { ...synced, undoStack: [...state.undoStack, snapshot(state)], redoStack: [] };
+      }),
+
     addNode: (type) =>
       set((state) => {
-        const nodes = resolveWorkflowNodes([...state.nodes, createNodeTemplate(type, state.nodes.length)], state.edges);
-        const synced = syncWorkflow(state, { nodes });
-        return {
-          ...synced,
-          undoStack: [...state.undoStack, snapshot(state)],
-          redoStack: [],
-        };
+        const nextNodes = [...state.nodes, createNodeTemplate(type, state.nodes.length)];
+        const graph = finalizeGraph(nextNodes, state.edges);
+        const synced = syncWorkflow(state, graph);
+        return { ...synced, undoStack: [...state.undoStack, snapshot(state)], redoStack: [] };
       }),
 
     addNodeAtPosition: (type, x, y) =>
       set((state) => {
         const node = createNodeTemplate(type, state.nodes.length);
         node.position = { x, y };
-        const nodes = resolveWorkflowNodes([...state.nodes, node], state.edges);
-        const synced = syncWorkflow(state, { nodes });
-        return {
-          ...synced,
-          undoStack: [...state.undoStack, snapshot(state)],
-          redoStack: [],
-        };
+        const graph = finalizeGraph([...state.nodes, node], state.edges);
+        const synced = syncWorkflow(state, graph);
+        return { ...synced, undoStack: [...state.undoStack, snapshot(state)], redoStack: [] };
       }),
 
     removeNode: (id) =>
       set((state) => {
-        const nextNodes = state.nodes.filter((node) => node.id !== id);
-        const edges = state.edges.filter((edge) => edge.source !== id && edge.target !== id);
-        const nodes = resolveWorkflowNodes(nextNodes, edges);
-        const synced = syncWorkflow(state, { nodes, edges });
-        return {
-          ...synced,
-          undoStack: [...state.undoStack, snapshot(state)],
-          redoStack: [],
-        };
+        const node = state.nodes.find((item) => item.id === id);
+        if (!node) {
+          return state;
+        }
+
+        const nextNodes = state.nodes.filter((item) => item.id !== id);
+        const edgesToRemove = state.edges.filter((edge) => edge.source === id);
+        const cleanedNodes = clearTargetHandlesForEdges(nextNodes, edgesToRemove);
+
+        const nextEdges = state.edges.filter((edge) => edge.source !== id && edge.target !== id);
+        const graph = finalizeGraph(cleanedNodes, nextEdges);
+        const synced = syncWorkflow(state, graph);
+        return { ...synced, undoStack: [...state.undoStack, snapshot(state)], redoStack: [] };
       }),
 
     setSelectedNodeIds: (ids) =>
-      set((state) => {
-        if (sameIds(state.selectedNodeIds, ids)) {
-          return state;
-        }
-
-        return { selectedNodeIds: ids };
-      }),
+      set((state) => (sameIds(state.selectedNodeIds, ids) ? state : { selectedNodeIds: ids })),
 
     setSelectedRunId: (id) =>
-      set((state) => {
-        if (state.selectedRunId === id) {
-          return state;
-        }
-
-        return { selectedRunId: id };
-      }),
+      set((state) => (state.selectedRunId === id ? state : { selectedRunId: id })),
 
     runWorkflow: async () => {
-      const state = get();
-      const runningIds = new Set(state.nodes.map((node) => node.id));
-      const nodes = state.nodes.map((node) => ({ ...node, data: { ...node.data, running: runningIds.has(node.id) } }));
-      set(syncWorkflow(state, { nodes }));
+      const current = get();
+      
+      const result = await executeWorkflow("full", undefined, current, (updatedNodes) => {
+        set(syncWorkflow(get(), { nodes: updatedNodes }));
+      });
+      
+      // Save run to DB in background
+      fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(result.run),
+      }).catch(err => console.error("Failed to save run to DB:", err));
 
-      try {
-        const result = await executeRun("full");
-        const materialized = await materializeMediaOutputs(result.nodes, result.run);
-        set((current) => {
-          const runs = [materialized.run, ...current.runs];
-          const synced = syncWorkflow(current, { nodes: materialized.nodes, runs });
-          return {
-            ...synced,
-            selectedRunId: materialized.run.id,
-          };
-        });
-      } catch {
-        const resolved = withResolvedInputs(get().nodes, get().edges);
-        const error = "Workflow execution request failed. Check your network connection or execution service configuration.";
-        const run = buildRequestFailureRun(get().currentWorkflowId, "full", resolved, undefined, error);
-        const finishedNodes = resolved.map((node) => ({
-          ...node,
-          data: {
-            ...node.data,
-            running: false,
-            validationError: error,
-          },
-        }));
-        set((current) => {
-          const runs = [run, ...current.runs];
-          const synced = syncWorkflow(current, { nodes: finishedNodes, runs });
-          return {
-            ...synced,
-            selectedRunId: run.id,
-          };
-        });
-      }
+      set((state) => {
+        const runs = [result.run, ...state.runs];
+        const synced = syncWorkflow(state, { nodes: result.nodes, runs });
+        return { ...synced, selectedRunId: result.run.id };
+      });
     },
 
     runSelected: async () => {
-      const state = get();
-      const targets = state.selectedNodeIds.length ? state.selectedNodeIds : state.nodes.slice(0, 2).map((node) => node.id);
-      const runningNodes = state.nodes.map((node) => ({
-        ...node,
-        data: { ...node.data, running: targets.includes(node.id) },
-      }));
-      set(syncWorkflow(state, { nodes: runningNodes }));
+      const current = get();
+      const targetIds = current.selectedNodeIds.length ? current.selectedNodeIds : current.nodes.map((node) => node.id);
 
-      try {
-        const result = await executeRun("selected", targets);
-        const materialized = await materializeMediaOutputs(result.nodes, result.run);
-        set((current) => {
-          const runs = [materialized.run, ...current.runs];
-          const synced = syncWorkflow(current, { nodes: materialized.nodes, runs });
-          return {
-            ...synced,
-            selectedRunId: materialized.run.id,
-          };
-        });
-      } catch {
-        const resolved = withResolvedInputs(get().nodes, get().edges);
-        const error = "Selected node execution request failed. Check your network connection or execution service configuration.";
-        const run = buildRequestFailureRun(get().currentWorkflowId, "selected", resolved, targets, error);
-        set((current) => {
-          const nodes = resolved.map((node) => ({ ...node, data: { ...node.data, running: false } }));
-          const runs = [run, ...current.runs];
-          const finishedNodes = nodes.map((node) => ({
-            ...node,
-            data: {
-              ...node.data,
-              validationError: run.nodeRuns.find((item) => item.nodeId === node.id)?.error,
-            },
-          }));
-          const synced = syncWorkflow(current, { nodes: finishedNodes, runs });
-          return {
-            ...synced,
-            selectedRunId: run.id,
-          };
-        });
-      }
+      const result = await executeWorkflow("selected", targetIds, current, (updatedNodes) => {
+        set(syncWorkflow(get(), { nodes: updatedNodes }));
+      });
+
+      // Save run to DB in background
+      fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(result.run),
+      }).catch(err => console.error("Failed to save run to DB:", err));
+
+      set((state) => {
+        const runs = [result.run, ...state.runs];
+        const synced = syncWorkflow(state, { nodes: result.nodes, runs });
+        return { ...synced, selectedRunId: result.run.id };
+      });
     },
 
     runSingleNode: async (id) => {
-      set((state) => {
-        const nodes = state.nodes.map((node) =>
-          node.id === id ? { ...node, data: { ...node.data, running: true } } : node,
-        );
-        return syncWorkflow(state, { nodes });
+      const current = get();
+
+      const result = await executeWorkflow("single", [id], current, (updatedNodes) => {
+        set(syncWorkflow(get(), { nodes: updatedNodes }));
       });
 
-      try {
-        const result = await executeRun("single", [id]);
-        const materialized = await materializeMediaOutputs(result.nodes, result.run);
-        set((state) => {
-          const runs = [materialized.run, ...state.runs];
-          const synced = syncWorkflow(state, { nodes: materialized.nodes, runs });
-          return {
-            ...synced,
-            selectedRunId: materialized.run.id,
-          };
-        });
-      } catch {
-        const resolved = withResolvedInputs(get().nodes, get().edges);
-        const error = "Single node execution request failed. Check your network connection or execution service configuration.";
-        const run = buildRequestFailureRun(get().currentWorkflowId, "single", resolved, [id], error);
-        set((state) => {
-          const nodes = resolved.map((node) =>
-            node.id === id
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    running: false,
-                    validationError: run.nodeRuns[0]?.error,
-                  },
-                }
-              : node,
-          );
-          const runs = [run, ...state.runs];
-          const synced = syncWorkflow(state, { nodes, runs });
-          return {
-            ...synced,
-            selectedRunId: run.id,
-          };
-        });
-      }
+      // Save run to DB in background
+      fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(result.run),
+      }).catch(err => console.error("Failed to save run to DB:", err));
+
+      set((state) => {
+        const runs = [result.run, ...state.runs];
+        const synced = syncWorkflow(state, { nodes: result.nodes, runs });
+        return { ...synced, selectedRunId: result.run.id };
+      });
     },
 
     exportWorkflow: () => ({ nodes: get().nodes, edges: get().edges }),
 
-    importWorkflow: (payload) =>
+    importWorkflow: (name, nodes, edges) => {
+      const newId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const workflow: WorkflowRecord = {
+        id: newId,
+        name: name || "Imported Workflow",
+        nodes: nodes || [],
+        edges: edges || [],
+        runs: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
       set((state) => {
-        const nodes = resolveWorkflowNodes(payload.nodes, payload.edges);
-        const synced = syncWorkflow(state, { nodes, edges: payload.edges, runs: [] });
-        return {
-          ...synced,
-          selectedRunId: undefined,
-          undoStack: [...state.undoStack, snapshot(state)],
-          redoStack: [],
-        };
-      }),
+        const workflows = [...state.workflows, workflow];
+        persist(workflows, state.currentWorkflowId);
+
+        // Save to DB in background
+        fetch("/api/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: workflow.id,
+            userId: "anonymous",
+            name: workflow.name,
+            nodesJson: workflow.nodes,
+            edgesJson: workflow.edges,
+          }),
+        }).catch(err => console.error("Failed to save imported workflow to DB:", err));
+
+        return { workflows };
+      });
+
+      return newId;
+    },
 
     undo: () =>
       set((state) => {
@@ -787,11 +1187,8 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
           return state;
         }
 
-        const synced = syncWorkflow(state, {
-          nodes: previous.nodes,
-          edges: previous.edges,
-        });
-
+        const graph = finalizeGraph(previous.nodes, previous.edges);
+        const synced = syncWorkflow(state, graph);
         return {
           ...synced,
           undoStack: state.undoStack.slice(0, -1),
@@ -806,11 +1203,8 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
           return state;
         }
 
-        const synced = syncWorkflow(state, {
-          nodes: next.nodes,
-          edges: next.edges,
-        });
-
+        const graph = finalizeGraph(next.nodes, next.edges);
+        const synced = syncWorkflow(state, graph);
         return {
           ...synced,
           redoStack: state.redoStack.slice(0, -1),

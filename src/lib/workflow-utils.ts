@@ -1,7 +1,8 @@
-import type { Connection, Edge, Node } from "@xyflow/react";
+import type { Connection, Edge } from "@xyflow/react";
 import type {
-  ConnectionHandle,
   DataKind,
+  RequestField,
+  ResponseItem,
   WorkflowEdge,
   WorkflowNode,
   WorkflowNodeData,
@@ -10,33 +11,41 @@ import type {
   WorkflowRunStatus,
 } from "@/types/workflow";
 
-const inputKinds: Record<WorkflowNodeType, Partial<Record<ConnectionHandle, DataKind>>> = {
-  text: {},
-  uploadImage: {},
-  uploadVideo: {},
-  runLLM: {
-    system_prompt: "text",
-    user_message: "text",
-  },
-  generateImage: {
-    system_prompt: "text",
-    user_message: "text",
-  },
-  cropImage: {
-    image_url: "image",
-    x_percent: "text",
-    y_percent: "text",
-    width_percent: "text",
-    height_percent: "text",
-  },
-  extractFrame: {
-    video_url: "video",
-    timestamp: "text",
-  },
-};
+export function sourceKindForHandle(node: WorkflowNode, handle?: string): DataKind | undefined {
+  if (node.data.nodeType === "request") {
+    const field = node.data.fields.find((item) => item.id === handle);
+    if (!field) {
+      return undefined;
+    }
 
-function getOutputKind(node?: Node<WorkflowNodeData>) {
-  return node?.data.outputKind;
+    return field.type === "image_field" ? "image" : "text";
+  }
+
+  if (node.data.nodeType === "cropImage") {
+    return "image";
+  }
+
+  if (node.data.nodeType === "gemini") {
+    return "text";
+  }
+
+  return undefined;
+}
+
+export function getSourceValue(node: WorkflowNode, handle?: string) {
+  if (node.data.nodeType === "request") {
+    return node.data.fields.find((item) => item.id === handle)?.value ?? "";
+  }
+
+  if (node.data.nodeType === "cropImage") {
+    return node.data.outputImage ?? node.data.imageUrl;
+  }
+
+  if (node.data.nodeType === "gemini") {
+    return node.data.response ?? "";
+  }
+
+  return "";
 }
 
 export function getIncomingValue(edges: WorkflowEdge[], nodes: WorkflowNode[], nodeId: string, handle: string) {
@@ -45,37 +54,65 @@ export function getIncomingValue(edges: WorkflowEdge[], nodes: WorkflowNode[], n
 
 export function getIncomingValues(edges: WorkflowEdge[], nodes: WorkflowNode[], nodeId: string, handle: string) {
   return edges
-    .filter((item) => item.target === nodeId && item.targetHandle === handle)
+    .filter((edge) => edge.target === nodeId && edge.targetHandle === handle)
     .map((edge) => {
-      const source = nodes.find((item) => item.id === edge.source);
-      if (!source) {
+      const sourceNode = nodes.find((node) => node.id === edge.source);
+      if (!sourceNode) {
         return undefined;
       }
 
-      switch (source.data.nodeType) {
-        case "text":
-          return source.data.text;
-        case "uploadImage":
-          return source.data.imageUrl;
-        case "uploadVideo":
-          return source.data.videoUrl;
-        case "runLLM":
-          return source.data.result;
-        case "generateImage":
-          return source.data.result;
-        case "cropImage":
-          return source.data.result ?? source.data.imageUrl;
-        case "extractFrame":
-          return source.data.result ?? source.data.videoUrl;
-        default:
-          return undefined;
-      }
+      return getSourceValue(sourceNode, edge.sourceHandle ?? undefined);
     })
-    .filter((value): value is string => typeof value === "string" && value.length > 0);
+    .filter((value): value is string => Boolean(value));
+}
+
+export function buildResponseItems(edges: WorkflowEdge[], nodes: WorkflowNode[], responseNodeId: string): ResponseItem[] {
+  return edges
+    .filter((edge) => edge.target === responseNodeId && edge.targetHandle === "result")
+    .map((edge) => {
+      const sourceNode = nodes.find((node) => node.id === edge.source);
+      const sourceLabel = sourceNode?.data.label ?? "Output";
+
+      return {
+        id: edge.id,
+        sourceNodeId: edge.source,
+        sourceNodeLabel: sourceLabel,
+        sourceHandle: edge.sourceHandle ?? "output",
+        value: sourceNode ? getSourceValue(sourceNode, edge.sourceHandle ?? undefined) : "",
+      };
+    });
 }
 
 export function isInputConnected(edges: WorkflowEdge[], nodeId: string, handle: string) {
   return edges.some((edge) => edge.target === nodeId && edge.targetHandle === handle);
+}
+
+function acceptsHandle(target: WorkflowNode, handle: string, kind?: DataKind) {
+  if (target.data.nodeType === "gemini") {
+    if (handle === "image_vision") {
+      return kind === "image";
+    }
+
+    if (handle === "prompt" || handle === "system_prompt") {
+      return kind === "text";
+    }
+
+    return false;
+  }
+
+  if (target.data.nodeType === "cropImage") {
+    if (handle === "input_image") {
+      return kind === "image";
+    }
+
+    return kind === "text";
+  }
+
+  if (target.data.nodeType === "response") {
+    return kind === "text" || kind === "image";
+  }
+
+  return false;
 }
 
 export function canConnect(connection: Edge | Connection, nodes: WorkflowNode[], edges: WorkflowEdge[]) {
@@ -89,18 +126,13 @@ export function canConnect(connection: Edge | Connection, nodes: WorkflowNode[],
     return false;
   }
 
-  const kind = getOutputKind(sourceNode);
-  const targetHandle = (connection.targetHandle ?? "output") as ConnectionHandle;
+  if (targetNode.data.nodeType === "request") {
+    return false;
+  }
 
-  if (targetHandle === "images") {
-    if (kind !== "image") {
-      return false;
-    }
-  } else {
-    const allowed = inputKinds[targetNode.data.nodeType][targetHandle];
-    if (!allowed || allowed !== kind) {
-      return false;
-    }
+  const kind = sourceKindForHandle(sourceNode, connection.sourceHandle ?? undefined);
+  if (!acceptsHandle(targetNode, connection.targetHandle ?? "", kind)) {
+    return false;
   }
 
   return !createsCycle(connection.source, connection.target, edges);
@@ -129,152 +161,181 @@ function createsCycle(sourceId: string, targetId: string, edges: WorkflowEdge[])
     }
 
     visited.add(current);
-    const next = adjacency.get(current) ?? [];
-    stack.push(...next);
+    stack.push(...(adjacency.get(current) ?? []));
   }
 
   return false;
 }
 
-export function createNodeTemplate(type: WorkflowNodeType, index: number): WorkflowNode {
-  const position = { x: 180 + (index % 3) * 280, y: 180 + index * 48 };
-  const common = {
+function createField(field: Partial<RequestField> & Pick<RequestField, "type">): RequestField {
+  return {
+    id: field.id ?? `field_${crypto.randomUUID()}`,
+    label: field.label ?? (field.type === "image_field" ? "image_field" : "text_field"),
+    type: field.type,
+    value: field.value ?? "",
+  };
+}
+
+function requestNode(position: { x: number; y: number }, fields?: RequestField[]) {
+  return {
+    id: `request-${crypto.randomUUID()}`,
+    type: "request" as WorkflowNodeType,
     position,
+    deletable: false,
     data: {
-      label: "",
-      nodeType: type,
-      description: "",
+      label: "Request-Inputs",
+      nodeType: "request" as const,
+      fields:
+        fields ?? [
+          createField({ type: "text_field", label: "text_field", value: "" }),
+          createField({ type: "image_field", label: "image_field", value: "" }),
+        ],
     },
   };
+}
 
-  switch (type) {
-    case "text":
-      return {
-        id: `text-${crypto.randomUUID()}`,
-        type,
-        ...common,
-        data: {
-          ...common.data,
-          label: "Text",
-          nodeType: "text",
-          description: "Prompt or structured text",
-          text: "Describe the intent for this node...",
-          role: "message",
-          outputKind: "text",
-        },
-      };
-    case "uploadImage":
-      return {
-        id: `upload-image-${crypto.randomUUID()}`,
-        type,
-        ...common,
-        data: {
-          ...common.data,
-          label: "Upload Image",
-          nodeType: "uploadImage",
-          description: "Transloadit powered media input",
-          fileName: "hero-shot.webp",
-          imageUrl:
-            "",
-          outputKind: "image",
-        },
-      };
-    case "uploadVideo":
-      return {
-        id: `upload-video-${crypto.randomUUID()}`,
-        type,
-        ...common,
-        data: {
-          ...common.data,
-          label: "Upload Video",
-          nodeType: "uploadVideo",
-          description: "Transloadit video input",
-          fileName: "campaign-cut.mp4",
-          videoUrl: "",
-          outputKind: "video",
-        },
-      };
-    case "runLLM":
-      return {
-        id: `llm-${crypto.randomUUID()}`,
-        type,
-        ...common,
-        data: {
-          ...common.data,
-          label: "Run Any LLM",
-          nodeType: "runLLM",
-          description: "Gemini via Trigger.dev",
-          model: "gemini-2.5-flash-lite",
-          systemPrompt: "",
-          userMessage: "",
-          acceptedImageCount: 4,
-          connectedImages: [],
-          outputKind: "text",
-        },
-      };
-    case "generateImage":
-      return {
-        id: `generate-image-${crypto.randomUUID()}`,
-        type,
-        ...common,
-        data: {
-          ...common.data,
-          label: "Generate Image",
-          nodeType: "generateImage",
-          description: "Gemini image generation",
-          model: "gemini-3.1-flash-image-preview",
-          systemPrompt: "",
-          userMessage: "",
-          connectedImages: [],
-          outputKind: "image",
-        },
-      };
-    case "cropImage":
-      return {
-        id: `crop-${crypto.randomUUID()}`,
-        type,
-        ...common,
-        data: {
-          ...common.data,
-          label: "Crop Image",
-          nodeType: "cropImage",
-          description: "FFmpeg crop task",
-          imageUrl: "",
-          xPercent: "0",
-          yPercent: "0",
-          widthPercent: "100",
-          heightPercent: "100",
-          outputKind: "image",
-        },
-      };
-    case "extractFrame":
-      return {
-        id: `frame-${crypto.randomUUID()}`,
-        type,
-        ...common,
-        data: {
-          ...common.data,
-          label: "Extract Frame",
-          nodeType: "extractFrame",
-          description: "FFmpeg still frame task",
-          videoUrl: "",
-          timestamp: "0",
-          outputKind: "image",
-        },
-      };
+function responseNode(position: { x: number; y: number }) {
+  return {
+    id: `response-${crypto.randomUUID()}`,
+    type: "response" as WorkflowNodeType,
+    position,
+    deletable: false,
+    data: {
+      label: "Response",
+      nodeType: "response" as const,
+      items: [],
+    },
+  };
+}
+
+export function createNodeTemplate(type: WorkflowNodeType, index: number): WorkflowNode {
+  const position = { x: 360 + index * 180, y: 180 + index * 24 };
+
+  if (type === "request") {
+    return requestNode(position);
   }
+
+  if (type === "response") {
+    return responseNode(position);
+  }
+
+  if (type === "cropImage") {
+    return {
+      id: `crop-${crypto.randomUUID()}`,
+      type,
+      position,
+      data: {
+        label: "Crop Image",
+        nodeType: "cropImage",
+        imageUrl: "",
+        xPercent: "0",
+        yPercent: "0",
+        widthPercent: "100",
+        heightPercent: "100",
+      },
+    };
+  }
+
+  return {
+    id: `gemini-${crypto.randomUUID()}`,
+    type,
+    position,
+    data: {
+      label: "Gemini 2.5 Flash",
+      nodeType: "gemini",
+      model: "gemini-2.5-flash",
+      prompt: "",
+      systemPrompt: "",
+      imageInput: "",
+      response: "",
+      settingsOpen: false,
+    },
+  };
+}
+
+export function createBlankWorkflowNodes() {
+  return [
+    requestNode({ x: 80, y: 240 }),
+    responseNode({ x: 1540, y: 220 }),
+  ] satisfies WorkflowNode[];
+}
+
+export function edgeColorForKind(kind?: DataKind) {
+  if (kind === "image") {
+    return "#4f7cff";
+  }
+
+  if (kind === "text") {
+    return "#f59e0b";
+  }
+
+  return "#22c55e";
+}
+
+export function styleEdge(edge: WorkflowEdge, nodes: WorkflowNode[]): WorkflowEdge {
+  return {
+    ...edge,
+    animated: true,
+    style: {
+      stroke: "#818cf8", // Sleek premium indigo/purple
+      strokeWidth: 2,
+      opacity: 0.9,
+    },
+  };
+}
+
+export function resolveWorkflowNodes(nodes: WorkflowNode[], edges: WorkflowEdge[]) {
+  return nodes.map((node) => {
+    if (node.data.nodeType === "gemini") {
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          prompt: getIncomingValue(edges, nodes, node.id, "prompt") ?? node.data.prompt,
+          systemPrompt: getIncomingValue(edges, nodes, node.id, "system_prompt") ?? node.data.systemPrompt,
+          imageInput: getIncomingValue(edges, nodes, node.id, "image_vision") ?? node.data.imageInput,
+        },
+      };
+    }
+
+    if (node.data.nodeType === "cropImage") {
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          imageUrl: getIncomingValue(edges, nodes, node.id, "input_image") ?? node.data.imageUrl,
+          xPercent: getIncomingValue(edges, nodes, node.id, "x_percent") ?? node.data.xPercent,
+          yPercent: getIncomingValue(edges, nodes, node.id, "y_percent") ?? node.data.yPercent,
+          widthPercent: getIncomingValue(edges, nodes, node.id, "width_percent") ?? node.data.widthPercent,
+          heightPercent: getIncomingValue(edges, nodes, node.id, "height_percent") ?? node.data.heightPercent,
+        },
+      };
+    }
+
+    if (node.data.nodeType === "response") {
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          items: buildResponseItems(edges, nodes, node.id),
+        },
+      };
+    }
+
+    return node;
+  });
 }
 
 export function statusToTone(status: WorkflowRunStatus) {
   switch (status) {
     case "success":
-      return "bg-emerald-500/16 text-emerald-200";
+      return "bg-emerald-100 text-emerald-700";
     case "failed":
-      return "bg-red-500/16 text-red-200";
+      return "bg-red-100 text-red-700";
     case "running":
-      return "bg-amber-500/16 text-amber-200";
+      return "bg-amber-100 text-amber-700";
     case "partial":
-      return "bg-yellow-500/16 text-yellow-100";
+      return "bg-yellow-100 text-yellow-700";
   }
 }
 

@@ -10,7 +10,7 @@ type AppProvidersProps = {
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
 export function AppProviders({ children }: AppProvidersProps) {
-  const content = <ThemeProvider attribute="class" forcedTheme="dark">{children}</ThemeProvider>;
+  const content = <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>{children}</ThemeProvider>;
 
   if (!hasClerk) {
     return content;

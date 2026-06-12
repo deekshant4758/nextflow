@@ -1,81 +1,48 @@
 import type { Edge, Node } from "@xyflow/react";
 
-export type WorkflowNodeType =
-  | "text"
-  | "uploadImage"
-  | "uploadVideo"
-  | "runLLM"
-  | "generateImage"
-  | "cropImage"
-  | "extractFrame";
+export type WorkflowNodeType = "request" | "gemini" | "cropImage" | "response";
 
-export type DataKind = "text" | "image" | "video";
+export type DataKind = "text" | "image";
 
-export type ConnectionHandle =
-  | "output"
-  | "system_prompt"
-  | "user_message"
-  | "images"
-  | "image_url"
-  | "video_url"
-  | "timestamp"
-  | "x_percent"
-  | "y_percent"
-  | "width_percent"
-  | "height_percent";
+export type RequestFieldType = "text_field" | "image_field";
 
 export type WorkflowRunStatus = "success" | "failed" | "running" | "partial";
 export type WorkflowRunScope = "full" | "selected" | "single";
 
+export type RequestField = {
+  id: string;
+  label: string;
+  type: RequestFieldType;
+  value: string;
+};
+
+export type ResponseItem = {
+  id: string;
+  sourceNodeId: string;
+  sourceNodeLabel: string;
+  sourceHandle: string;
+  value?: string;
+};
+
 export type BaseNodeData = {
   label: string;
   nodeType: WorkflowNodeType;
-  description: string;
-  outputKind?: DataKind;
   running?: boolean;
-  result?: string;
 };
 
-export type TextNodeData = BaseNodeData & {
-  nodeType: "text";
-  text: string;
-  role?: "system" | "message" | "value";
-  outputKind: "text";
+export type RequestNodeData = BaseNodeData & {
+  nodeType: "request";
+  fields: RequestField[];
 };
 
-export type UploadImageNodeData = BaseNodeData & {
-  nodeType: "uploadImage";
-  fileName?: string;
-  imageUrl?: string;
-  outputKind: "image";
-};
-
-export type UploadVideoNodeData = BaseNodeData & {
-  nodeType: "uploadVideo";
-  fileName?: string;
-  videoUrl?: string;
-  outputKind: "video";
-};
-
-export type RunLlmNodeData = BaseNodeData & {
-  nodeType: "runLLM";
+export type GeminiNodeData = BaseNodeData & {
+  nodeType: "gemini";
   model: string;
+  prompt: string;
   systemPrompt: string;
-  userMessage: string;
-  acceptedImageCount: number;
-  connectedImages: string[];
-  validationError?: string;
-  outputKind: "text";
-};
-
-export type GenerateImageNodeData = BaseNodeData & {
-  nodeType: "generateImage";
-  model: string;
-  systemPrompt: string;
-  userMessage: string;
-  connectedImages: string[];
-  validationError?: string;
-  outputKind: "image";
+  imageInput?: string;
+  response?: string;
+  settingsOpen?: boolean;
 };
 
 export type CropImageNodeData = BaseNodeData & {
@@ -85,29 +52,25 @@ export type CropImageNodeData = BaseNodeData & {
   yPercent: string;
   widthPercent: string;
   heightPercent: string;
-  outputKind: "image";
+  outputImage?: string;
 };
 
-export type ExtractFrameNodeData = BaseNodeData & {
-  nodeType: "extractFrame";
-  videoUrl: string;
-  timestamp: string;
-  outputKind: "image";
+export type ResponseNodeData = BaseNodeData & {
+  nodeType: "response";
+  items: ResponseItem[];
 };
 
 export type WorkflowNodeData =
-  | TextNodeData
-  | UploadImageNodeData
-  | UploadVideoNodeData
-  | RunLlmNodeData
-  | GenerateImageNodeData
+  | RequestNodeData
+  | GeminiNodeData
   | CropImageNodeData
-  | ExtractFrameNodeData;
+  | ResponseNodeData;
 
 export type WorkflowNode = Node<WorkflowNodeData>;
 export type WorkflowEdge = Edge;
 
 export type NodeRun = {
+  id?: string;
   nodeId: string;
   nodeLabel: string;
   nodeType: WorkflowNodeType;
@@ -116,6 +79,9 @@ export type NodeRun = {
   inputs: string[];
   output?: string;
   error?: string;
+  inputsJson?: Record<string, unknown>;
+  outputsJson?: Record<string, unknown>;
+  errorMessage?: string;
 };
 
 export type WorkflowRun = {
@@ -124,7 +90,8 @@ export type WorkflowRun = {
   scope: WorkflowRunScope;
   status: WorkflowRunStatus;
   startedAt: string;
+  completedAt?: string;
   durationMs: number;
-  summary: string;
-  nodeRuns: NodeRun[];
+  summary?: string;
+  nodes: NodeRun[];
 };
