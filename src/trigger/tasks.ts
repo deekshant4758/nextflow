@@ -1,7 +1,8 @@
 import { GoogleGenerativeAI, type Part } from "@google/generative-ai";
 import { task } from "@trigger.dev/sdk/v3";
 import { z } from "zod";
-import { env } from "@/lib/env";
+import { env } from "../lib/env";
+
 
 const llmPayloadSchema = z.object({
   model: z.string(),

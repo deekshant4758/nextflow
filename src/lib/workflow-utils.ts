@@ -275,7 +275,7 @@ export function edgeColorForKind(kind?: DataKind) {
 export function styleEdge(edge: WorkflowEdge, nodes: WorkflowNode[]): WorkflowEdge {
   return {
     ...edge,
-    animated: true,
+    animated: false,
     style: {
       stroke: "#818cf8", // Sleek premium indigo/purple
       strokeWidth: 2,

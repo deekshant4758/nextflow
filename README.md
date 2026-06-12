@@ -1,6 +1,6 @@
 # NextFlow
 
-NextFlow is a production-oriented workflow studio for building image, video, and text pipelines in a visual canvas. It combines a polished Next.js frontend, Clerk authentication, Neon Postgres via Prisma, Trigger.dev task execution, Gemini model integration, and Transloadit-backed media processing into one workspace.
+NextFlow is a production-oriented workflow studio for building image and text pipelines in a visual canvas. It combines a polished Next.js frontend, Clerk authentication, Neon Postgres via Prisma, Trigger.dev task execution, Gemini model integration, and Transloadit-backed media processing into one workspace.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=flat-square&logo=typescript)
@@ -23,59 +23,48 @@ The app includes:
 
 - a marketing homepage
 - protected sign-in and sign-up routes
-- a workflow studio at `/workflows`
-- node-based editing with React Flow
+- a workflow dashboard at `/workflows`
+- a node-based studio at `/workflows/:id`
 - workflow templates
-- execution history with a run inspector modal
+- execution history with a run inspector panel
 - background execution via Trigger.dev
 - text generation with Gemini
-- image generation with Gemini
-- image crop and frame extraction through Transloadit
+- image crop through Transloadit (client-side canvas crop fallback included)
 
 ## Core Features
 
 ### Product Features
 
-- visual workflow editor for text, image, and video tasks
-- create, rename, switch, and delete workflows
+- visual workflow editor for text and image tasks
+- create, rename, switch, duplicate, and delete workflows
 - starter templates for common creative flows
-- inline node results and a dedicated run inspector
-- quick-access node palette
+- inline node results and a dedicated history inspector
+- quick-access node palette with search
 - import/export workflow JSON
 - authentication-first access flow
-- persistent local workspace state in the browser
+- persistent workspace state (localStorage + Neon Postgres via API)
 
 ### Node Types
 
-- `Text`
-  - used for prompts, system guidance, or plain text values
-- `Upload Image`
-  - accepts image URL or local file input
-- `Upload Video`
-  - accepts video URL or local file input
-- `Run Any LLM`
-  - accepts:
-    - optional `system_prompt`
-    - required `user_message`
-    - optional multiple `images`
-  - returns text inline on the node
-- `Generate Image`
-  - accepts:
-    - optional style guidance
-    - required prompt
-    - optional multiple reference images
-  - returns generated image output
+- `Request Input`
+  - composable input node with text and image fields
+  - each field emits its own output handle for connecting downstream
 - `Crop Image`
-  - crops an image using backend media processing
-- `Extract Frame`
-  - extracts a still frame from a video using backend media processing
+  - crops an image using canvas (client-side) or Transloadit (server-side)
+  - accepts x/y/width/height as percentages
+- `Gemini 2.5 Flash`
+  - accepts optional system prompt, required prompt, optional image
+  - returns text inline on the node
+- `Response`
+  - collects outputs from connected upstream nodes
+  - displays all results in an expandable panel
 
 ### Execution Features
 
 - full workflow execution
 - selected-node execution
 - single-node execution
-- Trigger.dev-backed background tasks
+- Trigger.dev-backed background tasks for crop/LLM
 - model fallback for Gemini text generation when a model is under temporary high demand
 - execution history with status, timing, inputs, outputs, and errors
 
@@ -87,8 +76,9 @@ The app includes:
 - React 19
 - TypeScript
 - Tailwind CSS 4
-- React Flow
+- React Flow (@xyflow/react)
 - Zustand
+- shadcn/ui component library
 - Lucide icons
 
 ### Backend / Infrastructure
@@ -121,14 +111,16 @@ The app includes:
 +------------------------------------+
 |  Next.js Route Handlers / APIs     |
 |  /api/workflows                    |
-|  /api/workflows/run                |
+|  /api/workflows/[id]               |
+|  /api/workflows/[id]/runs          |
+|  /api/gemini                       |
 +-------------+----------------------+
               |
       +-------+--------+---------------+
       |       |        |               |
       v       v        v               v
    Prisma   Trigger   Gemini       Transloadit
-    + DB     tasks   text/image    crop/frame
+     + DB     tasks   text/image    crop/frame
       |
       v
     Neon
@@ -137,28 +129,21 @@ The app includes:
 ### Workflow Execution Flow
 
 1. User builds or opens a workflow in the studio
-2. The frontend sends node and edge state to `/api/workflows/run`
-3. The API sorts the graph and executes nodes in dependency order
-4. Runnable nodes dispatch work to Trigger.dev tasks
-5. Trigger tasks call Gemini or Transloadit depending on node type
-6. Outputs are returned to the app
-7. The studio updates node results and writes a run entry to history
-8. The user can inspect the full run in the modal inspector
+2. The frontend executes nodes in topological order (level by level)
+3. Nodes call the Gemini API route or Trigger.dev tasks depending on type
+4. Outputs are piped into connected downstream nodes automatically
+5. The studio updates node results and writes a run entry to history
+6. The user can inspect the full run in the history drawer
 
 ### State and Persistence
 
-There are currently two persistence layers in the project:
+There are two persistence layers:
 
 - **Browser persistence**
-  - the main workspace state uses local storage so users can return to their last in-browser state during development
-- **Database schema + API**
-  - Prisma models and a workflow creation API are present for Neon-backed persistence
-
-Important:
-
-- the Prisma schema and workflow create API exist
-- the interactive studio still primarily uses local browser persistence for day-to-day editing
-- this makes local iteration fast while the backend data model is already in place for production expansion
+  - workspace state uses localStorage for instant load on page revisit
+- **Neon Postgres via API**
+  - workflows are created, updated, and deleted through REST routes
+  - runs are written to the database after each execution
 
 ## Authentication Flow
 
@@ -171,7 +156,7 @@ The app uses Clerk for authentication.
 
 ## Database Schema
 
-The Prisma schema lives at [`prisma/schema.prisma`](C:/Users/deeks/Documents/New%20project/prisma/schema.prisma).
+The Prisma schema lives at [`prisma/schema.prisma`](prisma/schema.prisma).
 
 Main models:
 
@@ -197,7 +182,7 @@ Enums:
 
 ## Environment Variables
 
-Create a `.env.local` file in the project root.
+Create a `.env` file in the project root (copy `.env.example` as a starting point).
 
 ```env
 DATABASE_URL=
@@ -214,20 +199,23 @@ TRIGGER_SECRET_KEY=
 
 - `DATABASE_URL`
   - Neon Postgres connection string used by Prisma
+  - format: `postgresql://user:pass@host/db?sslmode=require`
 - `SESSION_SECRET`
   - reserved app secret value for secure server-side flows
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
-  - Clerk frontend key
+  - Clerk frontend publishable key (starts with `pk_`)
 - `CLERK_SECRET_KEY`
-  - Clerk backend secret
+  - Clerk backend secret key (starts with `sk_`)
 - `GOOGLE_GENERATIVE_AI_API_KEY`
-  - Gemini API key for text and image generation
+  - Gemini API key for text generation
+  - get it at: https://aistudio.google.com/app/apikey
 - `TRANSLOADIT_KEY`
-  - Transloadit auth key
+  - Transloadit auth key for media processing
 - `TRANSLOADIT_SECRET`
   - Transloadit secret for token and assembly creation
 - `TRIGGER_SECRET_KEY`
   - Trigger.dev access token for server-side task dispatch
+  - format: `tr_dev_...` (dev) or `tr_prod_...` (prod)
 
 ## Installation
 
@@ -239,7 +227,7 @@ TRIGGER_SECRET_KEY=
 - Clerk project
 - Trigger.dev project
 - Gemini API key
-- Transloadit project
+- Transloadit project (optional — crop falls back to canvas if missing)
 
 ### Install Dependencies
 
@@ -249,17 +237,37 @@ npm install
 
 ## Local Development
 
-### 1. Start the app
+### 1. Configure environment variables
+
+Copy the example file and fill in your keys:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your actual values.
+
+### 2. Generate Prisma client
+
+```bash
+npm run db:generate
+```
+
+### 3. Push the schema to Neon
+
+```bash
+npm run db:push
+```
+
+### 4. Start the app
 
 ```bash
 npm run dev
 ```
 
-Open:
+Open [http://localhost:3000](http://localhost:3000).
 
-- [http://localhost:3000](http://localhost:3000)
-
-### 2. Start the Trigger.dev worker in another terminal
+### 5. Start the Trigger.dev worker in another terminal
 
 ```bash
 npm run trigger:dev
@@ -267,61 +275,43 @@ npm run trigger:dev
 
 This is required for:
 
-- LLM tasks
-- image generation
-- image crop
-- video frame extraction
+- LLM tasks via Trigger.dev backend
+- image crop via Transloadit
 
-### 3. Generate Prisma client
-
-```bash
-npm run db:generate
-```
-
-### 4. Push the schema to Neon
-
-```bash
-npm run db:push
-```
-
-### 5. Or apply committed migrations
-
-```bash
-npm run db:migrate
-```
+If you skip this step, the app still runs — Gemini calls fall through to the `/api/gemini` route directly, and crop uses client-side canvas processing as a fallback.
 
 ## Available Scripts
 
 ### App Scripts
 
 ```bash
-npm run dev
-npm run build
-npm run start
-npm run lint
+npm run dev         # start local dev server
+npm run build       # build production bundle
+npm run start       # start production server
+npm run lint        # run ESLint
 ```
 
 ### Database Scripts
 
 ```bash
-npm run db:generate
-npm run db:push
-npm run db:migrate
+npm run db:generate   # regenerate Prisma client
+npm run db:push       # push schema to Neon (no migrations)
+npm run db:migrate    # apply committed Prisma migrations
 ```
 
 ### Debug Scripts
 
 ```bash
-npm run debug:gemini
-npm run debug:gemini-image
-npm run debug:extract-frame
+npm run debug:gemini           # test Gemini text generation
+npm run debug:gemini-image     # test Gemini image generation
+npm run debug:extract-frame    # test Transloadit frame extraction
 ```
 
 ### Trigger.dev Scripts
 
 ```bash
-npm run trigger:dev
-npm run trigger:deploy
+npm run trigger:dev      # run local Trigger.dev worker
+npm run trigger:deploy   # deploy tasks to Trigger.dev cloud
 ```
 
 ## Debugging Scripts
@@ -344,51 +334,35 @@ npm run debug:gemini -- --model=gemini-2.5-flash-lite --prompt="Describe this im
 npm run debug:gemini-image -- --model=gemini-3.1-flash-image-preview --prompt="Create a cinematic illustrated scene"
 ```
 
-With a reference image:
-
-```bash
-npm run debug:gemini-image -- --model=gemini-3.1-flash-image-preview --prompt="Create a stylized version of this image" --image="C:\path\to\image.jpg"
-```
-
-### Test Trigger Frame Extraction
-
-```bash
-npm run debug:extract-frame -- --video="https://www.w3schools.com/html/mov_bbb.mp4" --timestamp="1.2"
-```
-
-This script:
-
-- triggers `extract-frame-node`
-- polls Trigger.dev
-- prints the raw task output
-- prints the resolved output URL
-
 ## Project Structure
 
 ```text
 src/
 ├── app/
 │   ├── api/
+│   │   ├── gemini/route.ts
 │   │   └── workflows/
 │   │       ├── route.ts
+│   │       ├── [id]/route.ts
+│   │       ├── [id]/runs/route.ts
 │   │       └── run/route.ts
 │   ├── sign-in/
 │   ├── sign-up/
 │   ├── workflows/
-│   │   ├── client-workflow-studio.tsx
+│   │   ├── [workflowId]/page.tsx
 │   │   └── page.tsx
-│   ├── favicon.ico
 │   ├── globals.css
-│   ├── icon.svg
 │   ├── layout.tsx
 │   └── page.tsx
 ├── components/
 │   ├── providers/
 │   │   └── app-providers.tsx
 │   └── workflow/
+│       ├── custom-edge.tsx
 │       ├── nodes.tsx
 │       ├── workflow-store.ts
-│       └── workflow-studio.tsx
+│       ├── workflow-studio.tsx
+│       └── workflows-dashboard.tsx
 ├── lib/
 │   ├── client-media.ts
 │   ├── db.ts
@@ -408,32 +382,66 @@ prisma/
 ├── migrations/
 └── schema.prisma
 
-trigger.config.ts
+trigger.config.mjs
 ```
 
 ## API Endpoints
 
+### `GET /api/workflows`
+
+Returns all workflows for the current user.
+
 ### `POST /api/workflows`
 
-Creates a workflow record through Prisma.
+Creates a new workflow record through Prisma.
 
 Payload:
 
 ```json
 {
+  "id": "uuid",
   "userId": "user_123",
   "name": "Homepage flow",
-  "description": "optional",
   "nodesJson": [],
   "edgesJson": []
+}
+```
+
+### `PUT /api/workflows/:id`
+
+Updates workflow nodes and edges.
+
+```json
+{
+  "nodesJson": [],
+  "edgesJson": []
+}
+```
+
+### `DELETE /api/workflows/:id`
+
+Deletes a workflow and all associated runs.
+
+### `GET /api/workflows/:id/runs`
+
+Returns all runs for a workflow.
+
+### `POST /api/gemini`
+
+Calls Gemini directly for text generation.
+
+```json
+{
+  "model": "gemini-2.5-flash",
+  "prompt": "Write a haiku",
+  "systemPrompt": "Optional system message",
+  "imageInput": "https://... or data:image/png;base64,..."
 }
 ```
 
 ### `POST /api/workflows/run`
 
 Runs a workflow or subset of nodes.
-
-Payload:
 
 ```json
 {
@@ -455,36 +463,119 @@ Scopes:
 
 Recommended stack:
 
-- Vercel for the Next.js app
-- Neon for Postgres
-- Clerk for auth
-- Trigger.dev for tasks
+- **Vercel** for the Next.js app
+- **Neon** for Postgres
+- **Clerk** for auth
+- **Trigger.dev** for background tasks
 
-### Deployment Order
+### Step-by-step Deployment
 
-1. Create your Neon production database
-2. Create your Clerk production instance and configure domains
-3. Import the repo into Vercel
-4. Add production environment variables in Vercel
-5. Deploy Trigger.dev tasks
-6. Test auth, workflow execution, and media processing
+#### 1. Set up Neon Postgres
 
-### Vercel
+1. Create an account at [neon.tech](https://neon.tech)
+2. Create a new project
+3. Copy the connection string (it looks like `postgresql://user:pass@host/db?sslmode=require`)
 
-Add all environment variables in the Vercel project settings, then redeploy.
+#### 2. Set up Clerk
 
-### Trigger.dev
+1. Create a project at [clerk.com](https://clerk.com)
+2. In the Clerk dashboard:
+   - go to **API Keys**
+   - copy the **Publishable Key** (`pk_live_...`)
+   - copy the **Secret Key** (`sk_live_...`)
+3. Under **Domains**, add your Vercel deployment URL (e.g. `https://your-app.vercel.app`)
+4. Configure redirect URLs if needed (Clerk usually handles these automatically)
 
-Deploy tasks with:
+#### 3. Set up Trigger.dev
+
+1. Create an account at [trigger.dev](https://trigger.dev)
+2. Create a new project — note the **project ref** (e.g. `proj_aynpkitmssjglhbluaik`)
+3. Go to **API Keys** in the Trigger.dev dashboard
+4. Create a new **Production** secret key (`tr_prod_...`)
+5. Deploy your tasks:
 
 ```bash
+# Login to Trigger.dev CLI
 npx trigger.dev@latest login
+
+# Deploy tasks to production
 npm run trigger:deploy
 ```
 
-The current Trigger.dev project config is:
+> **Important**: The Trigger.dev CLI resolves TypeScript path aliases using relative imports. The task file at `src/trigger/tasks.ts` already uses `../lib/env` (relative) instead of `@/lib/env` (alias) to ensure the build succeeds.
 
-- project ref: `proj_aynpkitmssjglhbluaik`
+If you see a build error like:
+```
+Error: Build failed with 1 error:
+../home/builder/.npm/.../esbuild/lib/...
+```
+Check that no file in `src/trigger/` uses `@/` path aliases — convert them to relative imports (e.g. `../lib/env`).
+
+#### 4. Set up Transloadit (optional)
+
+1. Create an account at [transloadit.com](https://transloadit.com)
+2. Go to **Credentials** → copy **Auth Key** and **Auth Secret**
+3. Without Transloadit, image crop falls back to browser-side canvas processing automatically
+
+#### 5. Get a Gemini API Key
+
+1. Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+2. Create a new API key
+
+#### 6. Deploy to Vercel
+
+1. Push your repo to GitHub
+2. Import the repo at [vercel.com/new](https://vercel.com/new)
+3. In the Vercel project settings, add all environment variables:
+
+```
+DATABASE_URL=postgresql://...
+SESSION_SECRET=any-random-string-32-chars
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+CLERK_SECRET_KEY=sk_live_...
+GOOGLE_GENERATIVE_AI_API_KEY=AIza...
+TRANSLOADIT_KEY=...
+TRANSLOADIT_SECRET=...
+TRIGGER_SECRET_KEY=tr_prod_...
+```
+
+4. Deploy. Vercel auto-detects Next.js and configures the build.
+
+#### 7. Apply the Database Schema
+
+After deploying, push the Prisma schema to your Neon database:
+
+```bash
+# Set DATABASE_URL in your local .env to the production Neon connection string
+npm run db:push
+```
+
+Or if using migrations:
+
+```bash
+npm run db:migrate
+```
+
+#### 8. Verify the Deployment
+
+1. Open your Vercel URL — you should see the marketing homepage
+2. Click **Get started** — Clerk should redirect you to sign-in
+3. Sign up or sign in
+4. Create a new workflow, add nodes, and run it
+5. Check the Trigger.dev dashboard for task executions
+
+### Vercel Environment Variables Reference
+
+| Variable | Where to get it |
+|---|---|
+| `DATABASE_URL` | Neon project → Connection Details |
+| `SESSION_SECRET` | Generate any random 32+ char string |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk → API Keys → Publishable Key |
+| `CLERK_SECRET_KEY` | Clerk → API Keys → Secret Key |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Google AI Studio → API Keys |
+| `TRANSLOADIT_KEY` | Transloadit → Credentials |
+| `TRANSLOADIT_SECRET` | Transloadit → Credentials |
+| `TRIGGER_SECRET_KEY` | Trigger.dev → API Keys → Production |
 
 ## Verification
 
@@ -498,9 +589,9 @@ npm run build
 
 ## Current Constraints
 
-- the interactive studio still persists its main working state in local storage
-- backend workflow creation exists, but full workflow CRUD persistence is not yet fully wired into the studio UI
-- media-processing tasks depend on reachable public URLs for the most reliable backend execution path
+- the interactive studio persists its main working state in localStorage (fast, offline-capable) and syncs to Neon Postgres in the background
+- media-processing tasks via Transloadit depend on reachable public URLs — local `file://` or `data:` URLs fall back to client-side canvas processing
+- Trigger.dev tasks must use relative imports (not `@/` path aliases) because the esbuild bundler used by the Trigger.dev CLI does not read `tsconfig.json` paths
 
 ## Author
 
