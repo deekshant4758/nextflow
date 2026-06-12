@@ -122,21 +122,6 @@ function NodeShell({
   const requestNodesCount = nodes.filter((n) => n.type === "request").length;
   const isDeletable = node?.type === "request" ? requestNodesCount > 1 : node?.deletable !== false;
 
-  const glowStyle: React.CSSProperties =
-    nodeType === "request"
-      ? {
-          boxShadow:
-            "0 0 0 1px rgba(245,158,11,0.15), 0 4px 24px rgba(15,23,42,0.08), 0 0 32px rgba(245,158,11,0.12)",
-          borderColor: "rgba(245,158,11,0.3)",
-        }
-      : nodeType === "response"
-      ? {
-          boxShadow:
-            "0 0 0 1px rgba(34,197,94,0.15), 0 4px 24px rgba(15,23,42,0.08), 0 0 32px rgba(34,197,94,0.12)",
-          borderColor: "rgba(34,197,94,0.3)",
-        }
-      : {};
-
   return (
     <div
       className={cn(
@@ -144,7 +129,7 @@ function NodeShell({
         nodeType === "request" ? "border-[rgba(245,158,11,0.3)]" : nodeType === "response" ? "border-[rgba(34,197,94,0.3)]" : "border-[#e8eaed]",
         running && "running-node",
       )}
-      style={{ overflow: "visible", ...glowStyle }}
+      style={{ overflow: "visible" }}
     >
       <div className="flex items-center justify-between px-4 py-3 border-b border-[#f1f3f5]">
         <div className="flex items-center gap-2">
