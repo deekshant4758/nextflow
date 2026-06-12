@@ -1,41 +1,32 @@
-import { type ClassValue, clsx } from "clsx";
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
-  return clsx(inputs);
+  return twMerge(clsx(inputs))
 }
 
-export function formatDuration(durationMs: number) {
-  if (durationMs < 1000) {
-    return `${durationMs}ms`;
+export function formatTimestamp(timestamp: string | Date) {
+  const date = new Date(timestamp);
+
+  return date.toLocaleString();
+}
+
+export function formatDuration(ms: number) {
+  if (!ms) return "0s";
+
+  const seconds = Math.floor(ms / 1000);
+
+  if (seconds < 60) {
+    return `${seconds}s`;
   }
 
-  return `${(durationMs / 1000).toFixed(1)}s`;
-}
+  const minutes = Math.floor(seconds / 60);
 
-export function formatTimestamp(date: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(date));
-}
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
 
-export function downloadJson(filename: string, value: unknown) {
-  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
+  const hours = Math.floor(minutes / 60);
 
-export function downloadAsset(filename: string, url: string) {
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.target = "_blank";
-  anchor.rel = "noopener noreferrer";
-  anchor.click();
+  return `${hours}h`;
 }

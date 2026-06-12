@@ -1,9 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { WorkflowsDashboard } from "@/components/workflow/workflows-dashboard";
+import { ClientWorkflowStudio } from "@/app/workflows/client-workflow-studio";
 import { featureFlags } from "@/lib/env";
 
-export default async function WorkflowsPage() {
+export default async function WorkflowDetailPage() {
   if (featureFlags.clerk) {
     const { userId } = await auth();
 
@@ -12,5 +12,5 @@ export default async function WorkflowsPage() {
     }
   }
 
-  return <WorkflowsDashboard />;
+  return <ClientWorkflowStudio />;
 }

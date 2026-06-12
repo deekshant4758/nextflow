@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
+import { CandidateLinkedInLog } from "@/components/app/candidate-linkedin-log";
 import { AppProviders } from "@/components/providers/app-providers";
 import "./globals.css";
+import { Geist } from "next/font/google";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   title: "NextFlow",
@@ -18,9 +23,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" className={cn("font-sans", geist.variable)} suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased" suppressHydrationWarning>
-        <AppProviders>{children}</AppProviders>
+        <AppProviders>
+          <CandidateLinkedInLog />
+          {children}
+        </AppProviders>
       </body>
     </html>
   );

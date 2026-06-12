@@ -1,11 +1,15 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "Inter", "Segoe UI", sans-serif;
+  --font-sans: var(--font-sans);
   --font-mono: "SFMono-Regular", "Consolas", monospace;
 
-  --color-background: #131313;
-  --color-foreground: #e5e2e1;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
   --color-surface: #131313;
   --color-surface-dim: #131313;
   --color-surface-container-lowest: #0e0e0e;
@@ -14,11 +18,46 @@
   --color-surface-container-high: #2a2a2a;
   --color-surface-container-highest: #353535;
   --color-surface-bright: #393939;
-  --color-primary: #ffffff;
+  --color-primary: var(--primary);
   --color-primary-soft: #e2e2e2;
   --color-secondary: #c6c6c7;
   --color-outline: #8e9192;
   --color-outline-variant: #444748;
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 * {
@@ -26,17 +65,15 @@
 }
 
 html {
-  background: #131313;
-  color: #e5e2e1;
+  background: #fafafa;
+  color: #111827;
   scroll-behavior: smooth;
 }
 
 body {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top, rgba(255, 255, 255, 0.08), transparent 22%),
-    linear-gradient(180deg, #191919 0%, #111111 55%, #0b0b0b 100%);
-  color: #e5e2e1;
+  background: #fafafa;
+  color: #111827;
   font-family: "Inter", "Segoe UI", sans-serif;
 }
 
@@ -62,62 +99,184 @@ select {
   scrollbar-color: #444748 transparent;
 }
 
-.react-flow__panel,
 .react-flow__attribution {
   display: none;
 }
 
 .react-flow__edge-path {
-  stroke: rgba(255, 255, 255, 0.75);
-  stroke-width: 1.5;
-}
-
-.react-flow__controls {
-  border: 1px solid rgba(68, 71, 72, 0.5);
-  border-radius: 18px;
-  overflow: hidden;
-  background: rgba(19, 19, 19, 0.92);
-}
-
-.react-flow__controls-button {
-  border-bottom: 1px solid rgba(68, 71, 72, 0.4);
-  background: rgba(10, 10, 10, 0.96) !important;
-  color: #ffffff !important;
-}
-
-.react-flow__controls-button:hover {
-  background: #222222 !important;
-}
-
-.react-flow__controls-button svg,
-.react-flow__controls-button path {
-  stroke: #ffffff !important;
-  fill: none !important;
-}
-
-.react-flow__minimap {
-  border: 1px solid rgba(68, 71, 72, 0.5);
-  border-radius: 18px;
-  overflow: hidden;
-  background: rgba(19, 19, 19, 0.9);
+  stroke-linecap: round;
 }
 
 .running-node {
-  animation: node-pulse 1.4s ease-in-out infinite;
+  animation: node-pulse 1.6s ease-in-out infinite;
 }
 
 @keyframes node-pulse {
   0%,
   100% {
     box-shadow:
-      0 0 0 0 rgba(255, 255, 255, 0.16),
-      0 0 0 1px rgba(255, 255, 255, 0.12);
+      0 0 0 0 rgba(99, 102, 241, 0.16),
+      0 0 0 1px rgba(99, 102, 241, 0.18);
   }
 
   50% {
     box-shadow:
-      0 0 0 10px rgba(255, 255, 255, 0.02),
-      0 0 0 1px rgba(255, 255, 255, 0.3),
-      0 0 28px rgba(255, 255, 255, 0.18);
+      0 0 0 14px rgba(99, 102, 241, 0.05),
+      0 0 0 1px rgba(99, 102, 241, 0.28),
+      0 0 28px rgba(99, 102, 241, 0.22);
   }
+}
+
+/* -- ReactFlow canvas cursor fix -------------------------------- */
+.react-flow__pane.draggable {
+  cursor: default !important;
+}
+.react-flow__pane.dragging {
+  cursor: grabbing !important;
+}
+
+/* -- MiniMap transparent background ---------------------------- */
+.react-flow__minimap {
+  background: transparent !important;
+}
+
+/* -- Range slider thumb styling --------------------------------- */
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px #6366f1;
+  cursor: pointer;
+}
+input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px #6366f1;
+  cursor: pointer;
+}
+
+/* -- Custom sleek scrollbar ------------------------------------- */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+  overscroll-behavior: contain;
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* MiniMap node color styling */
+.react-flow__minimap-node.minimap-node-request {
+  fill: #f59e0b !important;
+}
+.react-flow__minimap-node.minimap-node-gemini {
+  fill: #6366f1 !important;
+}
+.react-flow__minimap-node.minimap-node-cropImage {
+  fill: #ec4899 !important;
+}
+.react-flow__minimap-node.minimap-node-response {
+  fill: #22c55e !important;
 }
