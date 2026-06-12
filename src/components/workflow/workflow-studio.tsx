@@ -34,6 +34,7 @@ import {
   Wallet,
   ZoomIn,
   ZoomOut,
+  Loader2,
 } from "lucide-react";
 import { cn, formatDuration, formatTimestamp } from "@/lib/utils";
 import { scopeToLabel, statusToTone } from "@/lib/workflow-utils";
@@ -354,6 +355,15 @@ function StudioInner() {
   const [workflowNameDraft, setWorkflowNameDraft] = useState("");
   const [showMinimap, setShowMinimap] = useState(true);
   const [zoomLabel, setZoomLabel] = useState("50%");
+  const [notification, setNotification] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  useEffect(() => {
+    if (!notification) return;
+    const timer = setTimeout(() => {
+      setNotification(null);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [notification]);
 
   const {
     workflowName,
@@ -410,6 +420,28 @@ function StudioInner() {
     return `Run ${selectedNodeIds.length} selected`;
   }, [selectedNodeIds.length]);
 
+  const estimatedTimeStr = useMemo(() => {
+    const totalSeconds = nodes.reduce((acc, node) => {
+      const type = node.type || node.data?.nodeType;
+      if (type === "gemini") return acc + 3.5;
+      if (type === "cropImage") return acc + 2.0;
+      if (type === "request") return acc + 0.1;
+      if (type === "response") return acc + 0.1;
+      return acc;
+    }, 0);
+
+    if (totalSeconds < 60) {
+      return `${totalSeconds.toFixed(1)}s`;
+    }
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = Math.round(totalSeconds % 60);
+    return `${mins}m ${secs}s`;
+  }, [nodes]);
+
+  const isWorkflowRunning = useMemo(() => {
+    return nodes.some((node) => node.data?.running === true);
+  }, [nodes]);
+
   return (
     <div className="relative h-screen overflow-hidden bg-[#f4f4f4] text-[#111827] dark:bg-zinc-950">
       <LeftRail />
@@ -450,8 +482,7 @@ function StudioInner() {
             <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white/90 px-2.5 text-[11px] font-medium text-gray-700 shadow-sm backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-200">
               <Calculator className="h-3.5 w-3.5" />
               <span className="text-gray-500 dark:text-zinc-400">Est</span>
-              <span className="tabular-nums">1.72</span>
-              <span className="text-gray-500 dark:text-zinc-400">M</span>
+              <span className="tabular-nums">{estimatedTimeStr}</span>
             </span>
           </span>
           <span className="hidden sm:inline-flex">
@@ -465,18 +496,41 @@ function StudioInner() {
           <div className="group relative">
             <button
               type="button"
+              disabled={isWorkflowRunning}
               onClick={async () => {
-                setHistoryOpen(true);
-                if (selectedNodeIds.length) {
-                  await runSelected();
-                } else {
-                  await runWorkflow();
+                try {
+                  let result;
+                  if (selectedNodeIds.length) {
+                    result = await runSelected();
+                  } else {
+                    result = await runWorkflow();
+                  }
+                  if (result?.status === "failed") {
+                    setNotification({
+                      message: `Workflow run failed: ${result.summary || "One or more nodes failed."}`,
+                      type: "error",
+                    });
+                  } else {
+                    setNotification({
+                      message: "Workflow run completed successfully!",
+                      type: "success",
+                    });
+                  }
+                } catch (err) {
+                  setNotification({
+                    message: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+                    type: "error",
+                  });
                 }
               }}
-              className="cursor-pointer flex h-8 w-9 items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white shadow-sm transition-all hover:bg-[#5558e3] dark:border-[#818cf8] dark:bg-[#6366f1]"
-              title={selectedCountLabel}
+              className="cursor-pointer flex h-8 w-9 items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white shadow-sm transition-all hover:bg-[#5558e3] disabled:opacity-50 disabled:cursor-not-allowed dark:border-[#818cf8] dark:bg-[#6366f1]"
+              title={isWorkflowRunning ? "Running workflow..." : selectedCountLabel}
             >
-              <Play className="h-3.5 w-3.5 fill-current" />
+              {isWorkflowRunning ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="h-3.5 w-3.5 fill-current" />
+              )}
             </button>
           </div>
           {/* Clock – only visible when history is CLOSED */}
@@ -695,7 +749,7 @@ function StudioInner() {
         {/* Bottom-center: docs + add node */}
         <div className="absolute bottom-4 left-1/2 z-30 -translate-x-1/2">
           <div className="flex items-center gap-1 overflow-visible rounded-xl border border-[#e5e7eb] bg-white px-2 py-1.5 shadow-sm backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95">
-            <Tooltip label="API docs">
+            <Tooltip label="Add sticky Notes">
               <button type="button" className="cursor-pointer rounded-lg p-1.5 text-[#6b7280] hover:bg-[#f3f4f6] hover:text-[#111827] dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white">
                 <BookOpen className="h-4 w-4" />
               </button>
@@ -732,6 +786,37 @@ function StudioInner() {
 
       {/* Execution History */}
       <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} />
+
+      {/* Toast Notification */}
+      {notification && (
+        <div className="fixed top-6 left-1/2 z-50 -translate-x-1/2 transform transition-all duration-300 animate-in fade-in slide-in-from-top-4">
+          <div className={cn(
+            "flex items-center gap-2.5 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-md transition-all duration-300",
+            notification.type === "error"
+              ? "border-red-200 bg-red-50/95 text-red-800 dark:border-red-900/50 dark:bg-red-950/95 dark:text-red-200"
+              : "border-green-200 bg-green-50/95 text-green-800 dark:border-green-900/50 dark:bg-green-950/95 dark:text-green-200"
+          )}>
+            {notification.type === "error" ? (
+              <svg className="h-5 w-5 text-red-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            ) : (
+              <svg className="h-5 w-5 text-green-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+            )}
+            <span className="text-[13px] font-semibold tracking-wide">{notification.message}</span>
+            <button
+              onClick={() => setNotification(null)}
+              className="ml-2 rounded p-0.5 hover:bg-black/5 dark:hover:bg-white/5"
+            >
+              <svg className="h-4 w-4 opacity-65" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

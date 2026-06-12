@@ -68,9 +68,9 @@ type WorkflowState = {
   removeNode: (id: string) => void;
   setSelectedNodeIds: (ids: string[]) => void;
   setSelectedRunId: (id?: string) => void;
-  runWorkflow: () => Promise<void>;
-  runSelected: () => Promise<void>;
-  runSingleNode: (id: string) => Promise<void>;
+  runWorkflow: () => Promise<WorkflowRun>;
+  runSelected: () => Promise<WorkflowRun>;
+  runSingleNode: (id: string) => Promise<WorkflowRun>;
   exportWorkflow: () => { nodes: WorkflowNode[]; edges: WorkflowEdge[] };
   importWorkflow: (name: string, nodes: WorkflowNode[], edges: WorkflowEdge[]) => string;
   undo: () => void;
@@ -1097,6 +1097,8 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
         const synced = syncWorkflow(state, { nodes: result.nodes, runs });
         return { ...synced, selectedRunId: result.run.id };
       });
+
+      return result.run;
     },
 
     runSelected: async () => {
@@ -1119,6 +1121,8 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
         const synced = syncWorkflow(state, { nodes: result.nodes, runs });
         return { ...synced, selectedRunId: result.run.id };
       });
+
+      return result.run;
     },
 
     runSingleNode: async (id) => {
@@ -1140,6 +1144,8 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
         const synced = syncWorkflow(state, { nodes: result.nodes, runs });
         return { ...synced, selectedRunId: result.run.id };
       });
+
+      return result.run;
     },
 
     exportWorkflow: () => ({ nodes: get().nodes, edges: get().edges }),
