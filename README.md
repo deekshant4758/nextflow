@@ -9,6 +9,15 @@ NextFlow is a production-oriented workflow studio for building image and text pi
 ![Trigger.dev](https://img.shields.io/badge/Trigger.dev-v4-6d28d9?style=flat-square)
 ![Clerk](https://img.shields.io/badge/Clerk-Auth-6c47ff?style=flat-square)
 
+## Demo 
+
+<video width="800" controls>
+  <source src="demo-compressed.mp4" type="video/mp4">
+</video>
+
+
+[[Watch Demo]](https://drive.google.com/file/d/1xbGFZY-fR5q8r4Eg4kOapIMhUfTgGAvy/view?usp=sharingYOUR_GOOGLE_DRIVE_LINK)
+
 ## Overview
 
 NextFlow is designed around a simple idea:
