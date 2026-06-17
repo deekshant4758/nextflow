@@ -184,28 +184,30 @@ export function WorkflowsDashboard() {
         open={!!deleteDialogId}
         onOpenChange={(open) => { if (!open) setDeleteDialogId(null); }}
       >
-        <AlertDialogContent className="!rounded-[28px] !p-8 sm:!max-w-[480px] !gap-6 bg-white dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 shadow-2xl">
-          <AlertDialogHeader className="!text-left sm:!text-left space-y-2">
-            <AlertDialogTitle className="text-xl font-bold text-gray-900 dark:text-white">Delete Workflow</AlertDialogTitle>
-            <AlertDialogDescription className="text-[15px] text-gray-500 dark:text-zinc-400 leading-relaxed mt-2">
+        <AlertDialogContent className="!rounded-3xl !w-auto !max-w-[420px] !p-0 overflow-hidden bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 shadow-xl gap-0">
+          <div className="px-6 pt-6 pb-6">
+            <AlertDialogTitle className="text-base font-semibold text-gray-900 dark:text-white mb-1.5">
+              Delete Workflow
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm text-gray-500 dark:text-zinc-400 leading-relaxed">
               Are you sure you want to delete &ldquo;{workflowToDelete?.name}&rdquo;?
               This action cannot be undone.
             </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="!m-0 !p-0 !border-t-0 !bg-transparent flex flex-row sm:justify-end gap-3 mt-6">
-            <AlertDialogCancel className="rounded-full px-6 h-10 border border-gray-950 dark:border-zinc-700 bg-white text-gray-950 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-800 font-semibold transition-colors">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="rounded-full px-6 h-10 bg-red-600 hover:bg-red-700 text-white font-semibold border-0 transition-colors"
-              onClick={() => {
-                if (deleteDialogId) deleteWorkflow(deleteDialogId);
-                setDeleteDialogId(null);
-              }}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
+            <div className="flex justify-end gap-2 mt-5">
+              <AlertDialogCancel className="!rounded-full h-10 px-6 text-sm border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-gray-700 dark:text-zinc-300 hover:bg-gray-50 font-medium shadow-none">
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                className="!rounded-full h-10 px-6 text-sm bg-red-600 hover:bg-red-700 text-white font-semibold border-0 shadow-none"
+                onClick={() => {
+                  if (deleteDialogId) deleteWorkflow(deleteDialogId);
+                  setDeleteDialogId(null);
+                }}
+              >
+                Delete
+              </AlertDialogAction>
+            </div>
+          </div>
         </AlertDialogContent>
       </AlertDialog>
 

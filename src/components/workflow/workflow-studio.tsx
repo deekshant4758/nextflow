@@ -423,8 +423,8 @@ function StudioInner() {
   const estimatedTimeStr = useMemo(() => {
     const totalSeconds = nodes.reduce((acc, node) => {
       const type = node.type || node.data?.nodeType;
-      if (type === "gemini") return acc + 3.5;
-      if (type === "cropImage") return acc + 2.0;
+      if (type === "gemini") return acc + 10.;
+      if (type === "cropImage") return acc + 30.0;
       if (type === "request") return acc + 0.1;
       if (type === "response") return acc + 0.1;
       return acc;
@@ -444,10 +444,9 @@ function StudioInner() {
 
   return (
     <div className="relative h-screen overflow-hidden bg-[#f4f4f4] text-[#111827] dark:bg-zinc-950">
-      <LeftRail />
 
       <div
-        className="absolute inset-0 left-14 transition-all duration-300 ease-in-out"
+        className="absolute inset-0 left-0 transition-all duration-300 ease-in-out"
         style={{ right: historyOpen ? 360 : 0 }}
       >
         {/* Top-left: back + workflow name */}
@@ -498,6 +497,7 @@ function StudioInner() {
               type="button"
               disabled={isWorkflowRunning}
               onClick={async () => {
+                setHistoryOpen(true);
                 try {
                   let result;
                   if (selectedNodeIds.length) {
