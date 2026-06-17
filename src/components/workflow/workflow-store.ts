@@ -20,6 +20,7 @@ import type {
   WorkflowNodeType,
   WorkflowRun,
   WorkflowRunScope,
+  NodeRun,
 } from "@/types/workflow";
 
 type Snapshot = {
@@ -532,16 +533,18 @@ async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: Wor
 }
 
 async function executeWorkflow(
+  runId: string,
   scope: WorkflowRunScope,
   targetIds: string[] | undefined,
   state: WorkflowState,
-  onNodesChange: (nodes: WorkflowNode[]) => void
+  onNodesChange: (nodes: WorkflowNode[]) => void,
+  onRunUpdate: (updatedFields: Partial<WorkflowRun>) => void
 ) {
   const startedAt = new Date();
   let workingNodes = structuredClone(state.nodes);
   const levels = buildLevels(workingNodes, state.edges, targetIds);
   const activeSet = new Set(targetIds?.length ? targetIds : workingNodes.map((node) => node.id));
-  const nodes: WorkflowRun["nodes"] = [];
+  const currentRunNodes: NodeRun[] = [];
 
   // Reset all nodes to running: false initially
   workingNodes = workingNodes.map((node) => ({
@@ -559,6 +562,25 @@ async function executeWorkflow(
     );
     onNodesChange(workingNodes);
 
+    // Add running entries in execution history in real-time
+    for (const id of level) {
+      const node = workingNodes.find((item) => item.id === id);
+      if (node) {
+        currentRunNodes.push({
+          nodeId: node.id,
+          nodeLabel: node.data.label,
+          nodeType: node.data.nodeType,
+          status: "running",
+          executionMs: 0,
+          inputs: [],
+        });
+      }
+    }
+    onRunUpdate({
+      durationMs: Date.now() - startedAt.getTime(),
+      nodes: [...currentRunNodes],
+    });
+
     const levelRuns = await Promise.all(
       level.map(async (id) => {
         const node = workingNodes.find((item) => item.id === id);
@@ -567,6 +589,24 @@ async function executeWorkflow(
         }
 
         const executed = await executeNode(node, workingNodes, state.edges);
+
+        // Update execution history in real time for this node
+        const idx = currentRunNodes.findIndex((rn) => rn.nodeId === id);
+        if (idx !== -1) {
+          currentRunNodes[idx] = {
+            ...currentRunNodes[idx],
+            status: executed.run.status,
+            executionMs: executed.run.executionMs,
+            inputs: executed.run.inputs || [],
+            output: executed.run.output,
+            error: executed.run.error,
+          };
+        }
+        onRunUpdate({
+          durationMs: Date.now() - startedAt.getTime(),
+          nodes: [...currentRunNodes],
+        });
+
         return { id, executed };
       }),
     );
@@ -577,7 +617,6 @@ async function executeWorkflow(
       workingNodes = workingNodes.map((item) =>
         item.id === result.id ? { ...result.executed.node, data: { ...result.executed.node.data, running: false } } : item
       );
-      nodes.push(result.executed.run);
     }
     
     workingNodes = resolveWorkflowNodes(workingNodes, state.edges);
@@ -599,17 +638,18 @@ async function executeWorkflow(
     state.edges,
   );
 
-  const status = nodes.some((run) => run.status === "failed") ? "failed" : "success";
+  const status = currentRunNodes.some((rn) => rn.status === "failed") ? "failed" : "success";
 
   const run: WorkflowRun = {
-    id: `run-${crypto.randomUUID()}`,
+    id: runId,
     workflowId: state.currentWorkflowId,
     scope,
     status,
     startedAt: startedAt.toISOString(),
+    completedAt: new Date().toISOString(),
     durationMs: Date.now() - startedAt.getTime(),
     summary: formatRunSummary(scope, status),
-    nodes,
+    nodes: currentRunNodes,
   };
 
   return {
@@ -619,7 +659,7 @@ async function executeWorkflow(
 }
 
 export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
-  const initial = createWorkflowRecord("Simple LLM Generator", "sample");
+  const initial = createWorkflowRecord("Sample Workflow", "sample");
 
   return {
     workflowName: initial.name,
@@ -1080,72 +1120,192 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
 
     runWorkflow: async () => {
       const current = get();
-      
-      const result = await executeWorkflow("full", undefined, current, (updatedNodes) => {
-        set(syncWorkflow(get(), { nodes: updatedNodes }));
-      });
-      
-      // Save run to DB in background
-      fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(result.run),
-      }).catch(err => console.error("Failed to save run to DB:", err));
+      const runId = `run-${crypto.randomUUID()}`;
+      const startedAt = new Date().toISOString();
+      const initialRun: WorkflowRun = {
+        id: runId,
+        workflowId: current.currentWorkflowId,
+        scope: "full",
+        status: "running",
+        startedAt,
+        durationMs: 0,
+        summary: "Running workflow...",
+        nodes: [],
+      };
 
       set((state) => {
-        const runs = [result.run, ...state.runs];
-        const synced = syncWorkflow(state, { nodes: result.nodes, runs });
-        return { ...synced, selectedRunId: result.run.id };
+        const runs = [initialRun, ...state.runs];
+        const synced = syncWorkflow(state, { runs });
+        return { ...synced, selectedRunId: runId };
       });
 
-      return result.run;
+      const onRunUpdate = (updatedFields: Partial<WorkflowRun>) => {
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? { ...r, ...updatedFields } : r);
+          const synced = syncWorkflow(state, { runs }, true);
+          return synced;
+        });
+      };
+
+      try {
+        const result = await executeWorkflow(runId, "full", undefined, current, (updatedNodes) => {
+          set(syncWorkflow(get(), { nodes: updatedNodes }));
+        }, onRunUpdate);
+        
+        // Save run to DB in background
+        fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(result.run),
+        }).catch(err => console.error("Failed to save run to DB:", err));
+
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? result.run : r);
+          const synced = syncWorkflow(state, { nodes: result.nodes, runs });
+          return { ...synced, selectedRunId: runId };
+        });
+
+        return result.run;
+      } catch (err) {
+        const failedRun: WorkflowRun = {
+          ...initialRun,
+          status: "failed",
+          durationMs: Date.now() - new Date(startedAt).getTime(),
+          summary: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+        };
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? failedRun : r);
+          return syncWorkflow(state, { runs });
+        });
+        throw err;
+      }
     },
 
     runSelected: async () => {
       const current = get();
       const targetIds = current.selectedNodeIds.length ? current.selectedNodeIds : current.nodes.map((node) => node.id);
-
-      const result = await executeWorkflow("selected", targetIds, current, (updatedNodes) => {
-        set(syncWorkflow(get(), { nodes: updatedNodes }));
-      });
-
-      // Save run to DB in background
-      fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(result.run),
-      }).catch(err => console.error("Failed to save run to DB:", err));
+      const runId = `run-${crypto.randomUUID()}`;
+      const startedAt = new Date().toISOString();
+      const initialRun: WorkflowRun = {
+        id: runId,
+        workflowId: current.currentWorkflowId,
+        scope: "selected",
+        status: "running",
+        startedAt,
+        durationMs: 0,
+        summary: "Running selected nodes...",
+        nodes: [],
+      };
 
       set((state) => {
-        const runs = [result.run, ...state.runs];
-        const synced = syncWorkflow(state, { nodes: result.nodes, runs });
-        return { ...synced, selectedRunId: result.run.id };
+        const runs = [initialRun, ...state.runs];
+        const synced = syncWorkflow(state, { runs });
+        return { ...synced, selectedRunId: runId };
       });
 
-      return result.run;
+      const onRunUpdate = (updatedFields: Partial<WorkflowRun>) => {
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? { ...r, ...updatedFields } : r);
+          const synced = syncWorkflow(state, { runs }, true);
+          return synced;
+        });
+      };
+
+      try {
+        const result = await executeWorkflow(runId, "selected", targetIds, current, (updatedNodes) => {
+          set(syncWorkflow(get(), { nodes: updatedNodes }));
+        }, onRunUpdate);
+
+        // Save run to DB in background
+        fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(result.run),
+        }).catch(err => console.error("Failed to save run to DB:", err));
+
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? result.run : r);
+          const synced = syncWorkflow(state, { nodes: result.nodes, runs });
+          return { ...synced, selectedRunId: runId };
+        });
+
+        return result.run;
+      } catch (err) {
+        const failedRun: WorkflowRun = {
+          ...initialRun,
+          status: "failed",
+          durationMs: Date.now() - new Date(startedAt).getTime(),
+          summary: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+        };
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? failedRun : r);
+          return syncWorkflow(state, { runs });
+        });
+        throw err;
+      }
     },
 
     runSingleNode: async (id) => {
       const current = get();
-
-      const result = await executeWorkflow("single", [id], current, (updatedNodes) => {
-        set(syncWorkflow(get(), { nodes: updatedNodes }));
-      });
-
-      // Save run to DB in background
-      fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(result.run),
-      }).catch(err => console.error("Failed to save run to DB:", err));
+      const runId = `run-${crypto.randomUUID()}`;
+      const startedAt = new Date().toISOString();
+      const initialRun: WorkflowRun = {
+        id: runId,
+        workflowId: current.currentWorkflowId,
+        scope: "single",
+        status: "running",
+        startedAt,
+        durationMs: 0,
+        summary: "Running single node...",
+        nodes: [],
+      };
 
       set((state) => {
-        const runs = [result.run, ...state.runs];
-        const synced = syncWorkflow(state, { nodes: result.nodes, runs });
-        return { ...synced, selectedRunId: result.run.id };
+        const runs = [initialRun, ...state.runs];
+        const synced = syncWorkflow(state, { runs });
+        return { ...synced, selectedRunId: runId };
       });
 
-      return result.run;
+      const onRunUpdate = (updatedFields: Partial<WorkflowRun>) => {
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? { ...r, ...updatedFields } : r);
+          const synced = syncWorkflow(state, { runs }, true);
+          return synced;
+        });
+      };
+
+      try {
+        const result = await executeWorkflow(runId, "single", [id], current, (updatedNodes) => {
+          set(syncWorkflow(get(), { nodes: updatedNodes }));
+        }, onRunUpdate);
+
+        // Save run to DB in background
+        fetch(`/api/workflows/${current.currentWorkflowId}/runs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(result.run),
+        }).catch(err => console.error("Failed to save run to DB:", err));
+
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? result.run : r);
+          const synced = syncWorkflow(state, { nodes: result.nodes, runs });
+          return { ...synced, selectedRunId: runId };
+        });
+
+        return result.run;
+      } catch (err) {
+        const failedRun: WorkflowRun = {
+          ...initialRun,
+          status: "failed",
+          durationMs: Date.now() - new Date(startedAt).getTime(),
+          summary: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+        };
+        set((state) => {
+          const runs = state.runs.map((r) => r.id === runId ? failedRun : r);
+          return syncWorkflow(state, { runs });
+        });
+        throw err;
+      }
     },
 
     exportWorkflow: () => ({ nodes: get().nodes, edges: get().edges }),
