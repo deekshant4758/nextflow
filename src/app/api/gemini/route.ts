@@ -10,10 +10,10 @@ const schema = z.object({
 });
 
 const FALLBACK_MODELS = [
-  "gemini-2.5-flash-lite",
   "gemini-2.5-flash",
-  "gemini-3-flash",
-  "gemma-3-27b-it",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
 ];
 
 function imageToPart(image: string): Part {

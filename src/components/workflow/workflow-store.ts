@@ -88,9 +88,24 @@ async function cropImageHelper(
   heightPercent: string
 ): Promise<string> {
   if (typeof window === "undefined") return imageUrl;
+
+  // For external http(s) URLs, route through our server-side proxy so CORS is
+  // bypassed and the canvas never gets tainted.
+  let srcUrl = imageUrl;
+  let objectUrl: string | null = null;
+  if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
+    const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+    const res = await fetch(proxyUrl);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch image via proxy (${res.status})`);
+    }
+    const blob = await res.blob();
+    objectUrl = URL.createObjectURL(blob);
+    srcUrl = objectUrl;
+  }
+
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.onload = () => {
       try {
         const canvas = document.createElement("canvas");
@@ -113,14 +128,23 @@ async function cropImageHelper(
         resolve(croppedDataUrl);
       } catch (err) {
         reject(err);
+      } finally {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
       }
     };
     img.onerror = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
       reject(new Error("Failed to load image for cropping"));
     };
-    img.src = imageUrl;
+    // Blob URLs are same-origin so no crossOrigin attribute needed.
+    // Only set it for data: URIs where it's harmless.
+    if (!srcUrl.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
+    img.src = srcUrl;
   });
 }
+
 
 function clearTargetHandlesForEdges(nodes: WorkflowNode[], edgesToRemove: WorkflowEdge[]): WorkflowNode[] {
   let nextNodes = [...nodes];
@@ -384,11 +408,13 @@ async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: Wor
       };
     }
 
-    // Validate image URL is accessible before proceeding
+    // Validate image URL: only hard-fail on a definitive 404 (resource doesn't exist).
+    // Many CDNs (e.g. Google thumbnails) block HEAD requests or return unexpected
+    // content-types, so we ignore network errors and non-404 HTTP errors entirely.
     if (imageUrl.startsWith("http")) {
       try {
         const checkRes = await fetch(imageUrl, { method: "HEAD" });
-        if (!checkRes.ok) {
+        if (checkRes.status === 404) {
           return {
             node: {
               ...node,
@@ -401,44 +427,14 @@ async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: Wor
               status: "failed" as const,
               executionMs: Date.now() - started,
               inputs: [imageUrl],
-              error: `Image URL returned HTTP ${checkRes.status}. Please check the URL.`,
+              error: "Image URL returned 404 — the image was not found. Please check the URL.",
             },
           };
         }
-        const ct = checkRes.headers.get("content-type") ?? "";
-        if (!ct.startsWith("image/")) {
-          return {
-            node: {
-              ...node,
-              data: { ...node.data, imageUrl, outputImage: "", running: false },
-            },
-            run: {
-              nodeId: node.id,
-              nodeLabel: node.data.label,
-              nodeType: node.data.nodeType,
-              status: "failed" as const,
-              executionMs: Date.now() - started,
-              inputs: [imageUrl],
-              error: `URL does not point to a valid image (content-type: ${ct || "unknown"}).`,
-            },
-          };
-        }
+        // For any other status (including non-image content-types returned by HEAD),
+        // we proceed — the actual crop will fail if the data is bad.
       } catch {
-        return {
-          node: {
-            ...node,
-            data: { ...node.data, imageUrl, outputImage: "", running: false },
-          },
-          run: {
-            nodeId: node.id,
-            nodeLabel: node.data.label,
-            nodeType: node.data.nodeType,
-            status: "failed" as const,
-            executionMs: Date.now() - started,
-            inputs: [imageUrl],
-            error: "Failed to reach image URL. Please check your network or URL.",
-          },
-        };
+        // Network error / CORS block — proceed optimistically.
       }
     }
 
