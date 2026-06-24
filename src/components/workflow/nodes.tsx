@@ -232,6 +232,7 @@ function UploadField({
   disabled?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
   async function uploadFile(file: File) {
     if (file.size > MAX_UPLOAD_BYTES) {
@@ -252,32 +253,58 @@ function UploadField({
   }
 
   const isUrl = value && (value.startsWith("http") || value.startsWith("data:"));
+  const isUploaded = value && (value.startsWith("blob:") || value.includes(".r2.dev") || value.includes("/api/uploads"));
 
   return (
     <div className={cn("rounded-lg border border-[#e5e7eb] bg-[#fafafa] overflow-hidden", disabled && "opacity-75")}>
       {/* Preview if image is set */}
       {isUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={value}
-          alt="Uploaded"
-          className="w-full max-h-40 object-cover border-b border-[#e5e7eb]"
-        />
+        <div className="relative">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={value}
+            alt="Uploaded"
+            className="w-full max-h-40 object-cover border-b border-[#e5e7eb]"
+          />
+          {uploading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-white/70 border-b border-[#e5e7eb]">
+              <div className="flex items-center gap-1.5">
+                <svg className="animate-spin h-4 w-4 text-[#6366f1]" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+                <span className="text-[11px] font-medium text-[#6366f1]">Uploading…</span>
+              </div>
+            </div>
+          )}
+        </div>
       )}
       <div className="flex items-center gap-2 p-2">
         <button
           type="button"
-          disabled={disabled}
+          disabled={disabled || uploading}
           className="cursor-pointer flex flex-1 h-8 items-center justify-center gap-1.5 rounded-md border border-dashed border-[#d1d5db] bg-white px-3 text-[11px] font-medium text-[#6b7280] hover:border-[#6366f1] hover:text-[#6366f1] transition-colors disabled:opacity-40 disabled:pointer-events-none"
           onClick={() => fileRef.current?.click()}
         >
-          <Upload className="h-3.5 w-3.5" />
-          {label}
+          {uploading ? (
+            <>
+              <svg className="animate-spin h-3.5 w-3.5 text-[#6366f1]" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+              </svg>
+              Uploading…
+            </>
+          ) : (
+            <>
+              <Upload className="h-3.5 w-3.5" />
+              {label}
+            </>
+          )}
         </button>
         <input
           ref={fileRef}
           type="file"
-          disabled={disabled}
+          disabled={disabled || uploading}
           accept="image/png,image/jpeg,image/webp,image/gif"
           className="hidden"
           onChange={async (event) => {
@@ -286,17 +313,19 @@ function UploadField({
             // Show local preview immediately
             const localUrl = URL.createObjectURL(file);
             onChange(localUrl);
+            setUploading(true);
             try {
               const url = await uploadFile(file);
               onChange(url);
             } finally {
+              setUploading(false);
               event.target.value = "";
             }
           }}
         />
       </div>
       <input
-        value={value}
+        value={isUploaded ? "" : value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         placeholder={disabled ? "Image is provided by incoming connection" : "Image URL..."}

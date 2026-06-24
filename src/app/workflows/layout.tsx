@@ -10,7 +10,7 @@ export default function WorkflowsLayout({
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       <Sidebar />
-      <div className="flex-1 overflow-hidden min-w-0">
+      <div className="flex flex-col flex-1 h-full overflow-y-auto min-w-0">
         {children}
       </div>
     </div>

@@ -186,7 +186,7 @@ function createWorkflowRecord(name: string, variant: "sample" | "blank"): Workfl
 
   if (variant === "sample") {
     return {
-      id: crypto.randomUUID(),
+      id: "sample-workflow-id",
       name,
       nodes: structuredClone(sampleNodes),
       edges: structuredClone(sampleEdges),
@@ -211,7 +211,12 @@ function createWorkflowRecord(name: string, variant: "sample" | "blank"): Workfl
 }
 
 function hydrateWorkflow(workflow: WorkflowRecord) {
-  const graph = finalizeGraph(workflow.nodes, workflow.edges);
+  // Always start with running:false to avoid stale state from DB or localStorage
+  const safeNodes = workflow.nodes.map((node) => ({
+    ...node,
+    data: { ...node.data, running: false },
+  }));
+  const graph = finalizeGraph(safeNodes, workflow.edges);
 
   return {
     workflowName: workflow.name,
@@ -379,10 +384,69 @@ async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: Wor
       };
     }
 
+    // Validate image URL is accessible before proceeding
+    if (imageUrl.startsWith("http")) {
+      try {
+        const checkRes = await fetch(imageUrl, { method: "HEAD" });
+        if (!checkRes.ok) {
+          return {
+            node: {
+              ...node,
+              data: { ...node.data, imageUrl, outputImage: "", running: false },
+            },
+            run: {
+              nodeId: node.id,
+              nodeLabel: node.data.label,
+              nodeType: node.data.nodeType,
+              status: "failed" as const,
+              executionMs: Date.now() - started,
+              inputs: [imageUrl],
+              error: `Image URL returned HTTP ${checkRes.status}. Please check the URL.`,
+            },
+          };
+        }
+        const ct = checkRes.headers.get("content-type") ?? "";
+        if (!ct.startsWith("image/")) {
+          return {
+            node: {
+              ...node,
+              data: { ...node.data, imageUrl, outputImage: "", running: false },
+            },
+            run: {
+              nodeId: node.id,
+              nodeLabel: node.data.label,
+              nodeType: node.data.nodeType,
+              status: "failed" as const,
+              executionMs: Date.now() - started,
+              inputs: [imageUrl],
+              error: `URL does not point to a valid image (content-type: ${ct || "unknown"}).`,
+            },
+          };
+        }
+      } catch {
+        return {
+          node: {
+            ...node,
+            data: { ...node.data, imageUrl, outputImage: "", running: false },
+          },
+          run: {
+            nodeId: node.id,
+            nodeLabel: node.data.label,
+            nodeType: node.data.nodeType,
+            status: "failed" as const,
+            executionMs: Date.now() - started,
+            inputs: [imageUrl],
+            error: "Failed to reach image URL. Please check your network or URL.",
+          },
+        };
+      }
+    }
+
     // 30+ second artificial delay (mandatory as per deliverables)
     await new Promise((resolve) => setTimeout(resolve, 30000));
 
-    let outputImage = imageUrl;
+    let outputImage = "";
+    let cropError: string | undefined;
     try {
       const xPercent = getIncomingValue(edges, nodes, node.id, "x_percent") ?? node.data.xPercent;
       const yPercent = getIncomingValue(edges, nodes, node.id, "y_percent") ?? node.data.yPercent;
@@ -398,7 +462,30 @@ async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: Wor
       );
     } catch (err) {
       console.error("Failed to crop image dynamically:", err);
-      outputImage = imageUrl;
+      cropError = err instanceof Error ? err.message : String(err);
+    }
+
+    if (cropError) {
+      return {
+        node: {
+          ...node,
+          data: {
+            ...node.data,
+            imageUrl,
+            outputImage: "",
+            running: false,
+          },
+        },
+        run: {
+          nodeId: node.id,
+          nodeLabel: node.data.label,
+          nodeType: node.data.nodeType,
+          status: "failed" as const,
+          executionMs: Date.now() - started,
+          inputs: [`x=${node.data.xPercent} y=${node.data.yPercent} w=${node.data.widthPercent} h=${node.data.heightPercent}`],
+          error: `Failed to load or crop image: ${cropError}`,
+        },
+      };
     }
 
     return {
@@ -543,7 +630,6 @@ async function executeWorkflow(
   const startedAt = new Date();
   let workingNodes = structuredClone(state.nodes);
   const levels = buildLevels(workingNodes, state.edges, targetIds);
-  const activeSet = new Set(targetIds?.length ? targetIds : workingNodes.map((node) => node.id));
   const currentRunNodes: NodeRun[] = [];
 
   // Reset all nodes to running: false initially
@@ -621,20 +707,22 @@ async function executeWorkflow(
     
     workingNodes = resolveWorkflowNodes(workingNodes, state.edges);
     onNodesChange(workingNodes);
+
+    // If any node in the current level failed, abort subsequent levels
+    const levelHasFailure = levelRuns.some((result) => result?.executed.run.status === "failed");
+    if (levelHasFailure) {
+      break;
+    }
   }
 
   const finishedNodes = resolveWorkflowNodes(
-    workingNodes.map((node) =>
-      activeSet.has(node.id)
-        ? {
-            ...node,
-            data: {
-              ...node.data,
-              running: false,
-            },
-          }
-        : node,
-    ),
+    workingNodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        running: false,
+      },
+    })),
     state.edges,
   );
 
@@ -684,6 +772,12 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
           localWorkflows = parsed.workflows || [];
           localCurrentId = parsed.currentWorkflowId || "";
         } catch(e) {}
+      }
+
+      // Check if sample workflow exists in localWorkflows; if not, prepend it
+      const sampleExists = localWorkflows.some((w) => w.id === "sample-workflow-id");
+      if (!sampleExists) {
+        localWorkflows = [initial, ...localWorkflows];
       }
 
       // Check if there is a workflowId in the URL pathname
@@ -842,10 +936,41 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
       const newId = crypto.randomUUID();
       const newName = `${source.name} Copy`;
       const now = new Date().toISOString();
+      const cleanNodes = structuredClone(source.nodes).map((node) => {
+        if (node.data.nodeType === "cropImage") {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              outputImage: "",
+            },
+          };
+        }
+        if (node.data.nodeType === "gemini") {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              response: "",
+            },
+          };
+        }
+        if (node.data.nodeType === "response") {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              items: node.data.items.map((item) => ({ ...item, value: "" })),
+            },
+          };
+        }
+        return node;
+      });
+
       const duplicated: WorkflowRecord = {
         id: newId,
         name: newName,
-        nodes: structuredClone(source.nodes),
+        nodes: cleanNodes,
         edges: structuredClone(source.edges),
         runs: [],
         createdAt: now,
@@ -1175,7 +1300,11 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
         };
         set((state) => {
           const runs = state.runs.map((r) => r.id === runId ? failedRun : r);
-          return syncWorkflow(state, { runs });
+          const clearedNodes = state.nodes.map((node) => ({
+            ...node,
+            data: { ...node.data, running: false },
+          }));
+          return syncWorkflow(state, { nodes: clearedNodes, runs });
         });
         throw err;
       }
@@ -1239,7 +1368,11 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
         };
         set((state) => {
           const runs = state.runs.map((r) => r.id === runId ? failedRun : r);
-          return syncWorkflow(state, { runs });
+          const clearedNodes = state.nodes.map((node) => ({
+            ...node,
+            data: { ...node.data, running: false },
+          }));
+          return syncWorkflow(state, { nodes: clearedNodes, runs });
         });
         throw err;
       }
@@ -1302,7 +1435,11 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
         };
         set((state) => {
           const runs = state.runs.map((r) => r.id === runId ? failedRun : r);
-          return syncWorkflow(state, { runs });
+          const clearedNodes = state.nodes.map((node) => ({
+            ...node,
+            data: { ...node.data, running: false },
+          }));
+          return syncWorkflow(state, { nodes: clearedNodes, runs });
         });
         throw err;
       }

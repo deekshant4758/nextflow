@@ -21,6 +21,8 @@ import {
   ChevronLeft,
   Clock3,
   Command,
+  Copy,
+  Download,
   LayoutGrid,
   Maximize2,
   Minimize2,
@@ -40,7 +42,7 @@ import { cn, formatDuration, formatTimestamp } from "@/lib/utils";
 import { scopeToLabel, statusToTone } from "@/lib/workflow-utils";
 import { nodeTypes } from "@/components/workflow/nodes";
 import { useWorkflowStudioStore } from "@/components/workflow/workflow-store";
-import type { WorkflowNodeType } from "@/types/workflow";
+import type { WorkflowNodeType, NodeRun } from "@/types/workflow";
 import { CustomDeletableEdge } from "./custom-edge";
 
 const edgeTypes = {
@@ -230,6 +232,55 @@ function FilterDropdown({
 }
 
 // ─── HistoryDrawer ───────────────────────────────────────────────────────────
+// ─── HistoryDrawer Helpers ───────────────────────────────────────────────────
+function CopyButtonInline({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Copied!" : "Copy output"}
+      className="cursor-pointer rounded p-0.5 text-[#9ca3af] hover:text-[#6366f1] transition-colors"
+    >
+      {copied
+        ? <Check className="h-3 w-3 text-emerald-500" strokeWidth={2.5} />
+        : <Copy className="h-3 w-3" />}
+    </button>
+  );
+}
+
+function DownloadButton({ url, filename }: { url: string; filename: string }) {
+  return (
+    <a
+      href={url}
+      download={filename}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Download image"
+      className="cursor-pointer rounded p-0.5 text-[#9ca3af] hover:text-[#6366f1] transition-colors"
+    >
+      <Download className="h-3 w-3" />
+    </a>
+  );
+}
+
+const isImageOutput = (nodeRun: NodeRun) => {
+  return (
+    nodeRun.nodeType === "cropImage" ||
+    (typeof nodeRun.output === "string" &&
+      (nodeRun.output.startsWith("data:image/") ||
+        /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(nodeRun.output)))
+  );
+};
+
+// ─── HistoryDrawer ───────────────────────────────────────────────────────────
 function HistoryDrawer({
   open,
   onClose,
@@ -239,6 +290,7 @@ function HistoryDrawer({
 }) {
   const runs = useWorkflowStudioStore((state) => state.runs);
   const [expandedRunId, setExpandedRunId] = useState<string | undefined>();
+  const [expandedNodeId, setExpandedNodeId] = useState<string | undefined>();
   const [filter, setFilter] = useState<string>("All");
 
   const filteredRuns =
@@ -283,7 +335,10 @@ function HistoryDrawer({
                 <div key={run.id} className="rounded-xl border border-[#e8eaed] bg-white p-3">
                   <button
                     type="button"
-                    onClick={() => setExpandedRunId(expandedRunId === run.id ? undefined : run.id)}
+                    onClick={() => {
+                      setExpandedRunId(expandedRunId === run.id ? undefined : run.id);
+                      setExpandedNodeId(undefined);
+                    }}
                     className="cursor-pointer w-full text-left"
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -316,17 +371,71 @@ function HistoryDrawer({
                             key={nodeRun.id || nodeRun.nodeId}
                             className="rounded-lg bg-[#f9fafb] p-2 border border-[#e8eaed] text-[10px]"
                           >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium text-[#374151]">{nodeRun.nodeLabel}</p>
-                                <p className="text-[9px] text-[#9ca3af] mt-0.5">
-                                  {nodeRun.nodeType} · {nodeRun.executionMs}ms
-                                </p>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedNodeId(expandedNodeId === nodeRun.nodeId ? undefined : nodeRun.nodeId)}
+                              className="cursor-pointer w-full text-left"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium text-[#374151]">{nodeRun.nodeLabel}</p>
+                                  <p className="text-[9px] text-[#9ca3af] mt-0.5">
+                                    {nodeRun.nodeType} · {nodeRun.executionMs}ms
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                  <span className={cn("flex-shrink-0 rounded px-1.5 py-0.5 font-semibold text-[9px]", statusToTone(nodeRun.status))}>
+                                    {nodeRun.status.substring(0, 3)}
+                                  </span>
+                                  <ChevronDown className={cn("h-3 w-3 text-[#c4c9d4] transition-transform", expandedNodeId === nodeRun.nodeId ? "rotate-180" : "")} />
+                                </div>
                               </div>
-                              <span className={cn("flex-shrink-0 rounded px-1.5 py-0.5 font-semibold text-[9px]", statusToTone(nodeRun.status))}>
-                                {nodeRun.status.substring(0, 3)}
-                              </span>
-                            </div>
+                            </button>
+
+                            {expandedNodeId === nodeRun.nodeId && (
+                              <div className="mt-2 pt-2 border-t border-[#e8eaed] space-y-2 text-[9px] text-[#4b5563]">
+                                {nodeRun.inputs && nodeRun.inputs.length > 0 && (
+                                  <div>
+                                    <div className="font-semibold text-[#111827]">Inputs:</div>
+                                    <ul className="list-disc list-inside mt-0.5 pl-1 space-y-0.5 text-gray-600">
+                                      {nodeRun.inputs.map((input, idx) => (
+                                        <li key={idx} className="truncate" title={input}>{input}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {nodeRun.output && (
+                                  <div>
+                                    <div className="flex items-center justify-between font-semibold text-[#111827] mb-1">
+                                      <span>Output:</span>
+                                      {isImageOutput(nodeRun) ? (
+                                        <DownloadButton url={nodeRun.output} filename={`${nodeRun.nodeLabel || "cropped"}.png`} />
+                                      ) : (
+                                        <CopyButtonInline text={nodeRun.output} />
+                                      )}
+                                    </div>
+                                    {isImageOutput(nodeRun) ? (
+                                      <div className="mt-0.5 border border-[#e8eaed] rounded overflow-hidden max-h-24 bg-white flex items-center justify-center">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={nodeRun.output} alt="Output Preview" className="max-h-24 object-contain" />
+                                      </div>
+                                    ) : (
+                                      <div className="mt-0.5 p-1.5 bg-white border border-[#e8eaed] rounded font-mono text-[9px] text-gray-700 whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
+                                        {nodeRun.output}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {nodeRun.error && (
+                                  <div>
+                                    <div className="font-semibold text-red-600">Error:</div>
+                                    <div className="mt-0.5 p-1.5 bg-red-50 text-red-700 border border-red-100 rounded font-mono text-[9px] whitespace-pre-wrap break-all">
+                                      {nodeRun.error}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ))
                       )}
