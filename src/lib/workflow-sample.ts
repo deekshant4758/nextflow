@@ -24,7 +24,7 @@ const sampleNodesBase: WorkflowNode[] = [
           id: "field_2d9eeba8-9814-437b-b128-0ddb23c19d91",
           label: "image_field",
           type: "image_field",
-          value: "https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/fd37973cca8c4c9881098b09177774b7/d6f98e10ad0744b4889ef349cae5a6e9/4532677f6fb34c90aaff74fd4e278775.jpg"
+          value: "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcSOubvsnSk6jCp3msQODNV3QVYZZG-IIhufJI6oMhfakE0E3YDBPBfhFPFfLvMiztziekcF-Pkm5FWfD8pLEv3yppF3-WSZm2ji1_wGgaqJnHIEHfTgDydeUA"
         }
       ]
     }
@@ -79,7 +79,7 @@ const sampleNodesBase: WorkflowNode[] = [
     data: {
       label: "Crop Image",
       nodeType: "cropImage",
-      imageUrl: "https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/fd37973cca8c4c9881098b09177774b7/d6f98e10ad0744b4889ef349cae5a6e9/4532677f6fb34c90aaff74fd4e278775.jpg",
+      imageUrl: "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcSOubvsnSk6jCp3msQODNV3QVYZZG-IIhufJI6oMhfakE0E3YDBPBfhFPFfLvMiztziekcF-Pkm5FWfD8pLEv3yppF3-WSZm2ji1_wGgaqJnHIEHfTgDydeUA",
       xPercent: "20",
       yPercent: "20",
       widthPercent: "60",
@@ -96,7 +96,7 @@ const sampleNodesBase: WorkflowNode[] = [
     data: {
       label: "Crop Image",
       nodeType: "cropImage",
-      imageUrl: "https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/fd37973cca8c4c9881098b09177774b7/d6f98e10ad0744b4889ef349cae5a6e9/4532677f6fb34c90aaff74fd4e278775.jpg",
+      imageUrl: "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcSOubvsnSk6jCp3msQODNV3QVYZZG-IIhufJI6oMhfakE0E3YDBPBfhFPFfLvMiztziekcF-Pkm5FWfD8pLEv3yppF3-WSZm2ji1_wGgaqJnHIEHfTgDydeUA",
       xPercent: "0",
       yPercent: "0",
       widthPercent: "100",
@@ -134,7 +134,7 @@ const sampleNodesBase: WorkflowNode[] = [
       model: "gemini-2.5-flash",
       prompt: "",
       systemPrompt: "You are a social media manager.\nCombine the tweet hook and the two product crops into a final marketing post.",
-      imageInput: "https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/fd37973cca8c4c9881098b09177774b7/d6f98e10ad0744b4889ef349cae5a6e9/4532677f6fb34c90aaff74fd4e278775.jpg",
+      imageInput: "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcSOubvsnSk6jCp3msQODNV3QVYZZG-IIhufJI6oMhfakE0E3YDBPBfhFPFfLvMiztziekcF-Pkm5FWfD8pLEv3yppF3-WSZm2ji1_wGgaqJnHIEHfTgDydeUA",
       response: "",
       settingsOpen: false
     }
