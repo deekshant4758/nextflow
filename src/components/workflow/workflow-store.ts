@@ -62,6 +62,11 @@ type WorkflowState = {
   onConnect: (connection: Connection) => void;
   updateNodeData: (id: string, patch: Partial<WorkflowNodeData>) => void;
   addRequestField: (nodeId: string, type: RequestField["type"]) => void;
+  addRequestFieldAndConnect: (
+    targetNodeId: string,
+    targetHandle: string,
+    field: Pick<RequestField, "label" | "type" | "value">,
+  ) => void;
   updateRequestField: (nodeId: string, fieldId: string, patch: Partial<RequestField>) => void;
   removeRequestField: (nodeId: string, fieldId: string) => void;
   addNode: (type: WorkflowNodeType) => void;
@@ -79,6 +84,12 @@ type WorkflowState = {
 };
 
 const STORAGE_KEY = "nextflow-studio-v4";
+
+function findPrimaryRequestNode(nodes: WorkflowNode[]) {
+  return nodes
+    .filter((node) => node.data.nodeType === "request")
+    .sort((a, b) => a.position.x - b.position.x)[0];
+}
 
 async function cropImageHelper(
   imageUrl: string,
@@ -158,6 +169,19 @@ function clearTargetHandlesForEdges(nodes: WorkflowNode[], edgesToRemove: Workfl
         if (edge.targetHandle === "image_vision") geminiData.imageInput = "";
         else if (edge.targetHandle === "prompt") geminiData.prompt = "";
         else if (edge.targetHandle === "system_prompt") geminiData.systemPrompt = "";
+        else if (edge.targetHandle === "temperature") geminiData.temperature = 0.7;
+        else if (edge.targetHandle === "max_tokens") geminiData.maxTokens = 1024;
+        else if (edge.targetHandle === "reasoning") geminiData.reasoning = false;
+        else if (edge.targetHandle === "top_p") geminiData.topP = 1;
+        else if (edge.targetHandle === "top_k") geminiData.topK = 0;
+        else if (edge.targetHandle === "frequency_penalty") geminiData.frequencyPenalty = 0;
+        else if (edge.targetHandle === "presence_penalty") geminiData.presencePenalty = 0;
+        else if (edge.targetHandle === "repetition_penalty") geminiData.repetitionPenalty = 1;
+        else if (edge.targetHandle === "min_p") geminiData.minP = 0;
+        else if (edge.targetHandle === "top_a") geminiData.topA = 0;
+        else if (edge.targetHandle === "seed") geminiData.seed = 0;
+        else if (edge.targetHandle === "stop") geminiData.stopSequences = "";
+        else if (edge.targetHandle === "response_format") geminiData.jsonMode = false;
         return { ...node, data: geminiData };
       }
 
@@ -328,7 +352,7 @@ function formatRunSummary(scope: WorkflowRunScope, status: WorkflowRun["status"]
   return "Workflow run completed.";
 }
 
-function buildLevels(nodes: WorkflowNode[], edges: WorkflowEdge[], targetIds?: string[]) {
+function buildExecutionGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], targetIds?: string[]) {
   const targetSet = targetIds?.length ? new Set(targetIds) : new Set(nodes.map((node) => node.id));
   const activeNodes = nodes.filter((node) => targetSet.has(node.id));
   const indegree = new Map(activeNodes.map((node) => [node.id, 0]));
@@ -345,25 +369,14 @@ function buildLevels(nodes: WorkflowNode[], edges: WorkflowEdge[], targetIds?: s
     adjacency.set(edge.source, list);
   }
 
-  const queue = activeNodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id);
-  const levels: string[][] = [];
+  const initialReady = activeNodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id);
 
-  while (queue.length > 0) {
-    const currentLevel = [...queue];
-    levels.push(currentLevel);
-    queue.length = 0;
-
-    for (const id of currentLevel) {
-      for (const next of adjacency.get(id) ?? []) {
-        indegree.set(next, (indegree.get(next) ?? 1) - 1);
-        if ((indegree.get(next) ?? 0) === 0) {
-          queue.push(next);
-        }
-      }
-    }
-  }
-
-  return levels.length ? levels : [activeNodes.map((node) => node.id)];
+  return {
+    targetSet,
+    indegree,
+    adjacency,
+    initialReady: initialReady.length ? initialReady : activeNodes.map((node) => node.id),
+  };
 }
 
 async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: WorkflowEdge[]) {
@@ -510,6 +523,10 @@ async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: Wor
     const prompt = getIncomingValue(edges, nodes, node.id, "prompt") ?? node.data.prompt;
     const systemPrompt = getIncomingValue(edges, nodes, node.id, "system_prompt") ?? node.data.systemPrompt;
     const imageInput = getIncomingValue(edges, nodes, node.id, "image_vision") ?? node.data.imageInput;
+    const stopSequences = (node.data.stopSequences ?? "")
+      .split(/[\n,]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
 
     if (!prompt.trim()) {
       return {
@@ -549,6 +566,13 @@ async function executeNode(node: WorkflowNode, nodes: WorkflowNode[], edges: Wor
           prompt,
           systemPrompt: systemPrompt || undefined,
           imageInput: imageInput || undefined,
+          temperature: node.data.temperature,
+          maxTokens: node.data.maxTokens,
+          topP: node.data.topP,
+          topK: node.data.topK,
+          seed: node.data.seed,
+          stopSequences: stopSequences.length ? stopSequences : undefined,
+          jsonMode: node.data.jsonMode,
         }),
       });
 
@@ -625,7 +649,7 @@ async function executeWorkflow(
 ) {
   const startedAt = new Date();
   let workingNodes = structuredClone(state.nodes);
-  const levels = buildLevels(workingNodes, state.edges, targetIds);
+  const executionGraph = buildExecutionGraph(workingNodes, state.edges, targetIds);
   const currentRunNodes: NodeRun[] = [];
 
   // Reset all nodes to running: false initially
@@ -635,80 +659,89 @@ async function executeWorkflow(
   }));
   onNodesChange(workingNodes);
 
-  for (const level of levels) {
-    // Mark only nodes in the current level as running: true
-    workingNodes = workingNodes.map((node) =>
-      level.includes(node.id)
-        ? { ...node, data: { ...node.data, running: true } }
-        : { ...node, data: { ...node.data, running: false } }
-    );
-    onNodesChange(workingNodes);
+  const pendingIndegree = new Map(executionGraph.indegree);
+  const scheduled = new Set<string>();
+  const inFlight = new Set<Promise<void>>();
 
-    // Add running entries in execution history in real-time
-    for (const id of level) {
-      const node = workingNodes.find((item) => item.id === id);
-      if (node) {
-        currentRunNodes.push({
-          nodeId: node.id,
-          nodeLabel: node.data.label,
-          nodeType: node.data.nodeType,
-          status: "running",
-          executionMs: 0,
-          inputs: [],
-        });
-      }
+  const updateRunEntry = (nodeId: string, patch: Partial<NodeRun>) => {
+    const idx = currentRunNodes.findIndex((entry) => entry.nodeId === nodeId);
+    if (idx !== -1) {
+      currentRunNodes[idx] = { ...currentRunNodes[idx], ...patch };
     }
     onRunUpdate({
       durationMs: Date.now() - startedAt.getTime(),
       nodes: [...currentRunNodes],
     });
+  };
 
-    const levelRuns = await Promise.all(
-      level.map(async (id) => {
-        const node = workingNodes.find((item) => item.id === id);
-        if (!node) {
-          return undefined;
-        }
-
-        const executed = await executeNode(node, workingNodes, state.edges);
-
-        // Update execution history in real time for this node
-        const idx = currentRunNodes.findIndex((rn) => rn.nodeId === id);
-        if (idx !== -1) {
-          currentRunNodes[idx] = {
-            ...currentRunNodes[idx],
-            status: executed.run.status,
-            executionMs: executed.run.executionMs,
-            inputs: executed.run.inputs || [],
-            output: executed.run.output,
-            error: executed.run.error,
-          };
-        }
-        onRunUpdate({
-          durationMs: Date.now() - startedAt.getTime(),
-          nodes: [...currentRunNodes],
-        });
-
-        return { id, executed };
-      }),
-    );
-
-    // Apply executed data and clear running state for completed nodes
-    for (const result of levelRuns) {
-      if (!result) continue;
-      workingNodes = workingNodes.map((item) =>
-        item.id === result.id ? { ...result.executed.node, data: { ...result.executed.node.data, running: false } } : item
-      );
+  const scheduleNode = (id: string) => {
+    if (scheduled.has(id) || !executionGraph.targetSet.has(id)) {
+      return;
     }
-    
-    workingNodes = resolveWorkflowNodes(workingNodes, state.edges);
+
+    const nodeBeforeRun = workingNodes.find((item) => item.id === id);
+    if (!nodeBeforeRun) {
+      return;
+    }
+
+    scheduled.add(id);
+    workingNodes = workingNodes.map((node) =>
+      node.id === id ? { ...node, data: { ...node.data, running: true } } : node,
+    );
     onNodesChange(workingNodes);
 
-    // If any node in the current level failed, abort subsequent levels
-    const levelHasFailure = levelRuns.some((result) => result?.executed.run.status === "failed");
-    if (levelHasFailure) {
-      break;
-    }
+    currentRunNodes.push({
+      nodeId: nodeBeforeRun.id,
+      nodeLabel: nodeBeforeRun.data.label,
+      nodeType: nodeBeforeRun.data.nodeType,
+      status: "running",
+      executionMs: 0,
+      inputs: [],
+    });
+    onRunUpdate({
+      durationMs: Date.now() - startedAt.getTime(),
+      nodes: [...currentRunNodes],
+    });
+
+    const task = (async () => {
+      const liveNode = workingNodes.find((item) => item.id === id);
+      if (!liveNode) {
+        return;
+      }
+
+      const executed = await executeNode(liveNode, workingNodes, state.edges);
+
+      workingNodes = workingNodes.map((item) =>
+        item.id === id ? { ...executed.node, data: { ...executed.node.data, running: false } } : item,
+      );
+      workingNodes = resolveWorkflowNodes(workingNodes, state.edges);
+      onNodesChange(workingNodes);
+
+      updateRunEntry(id, {
+        status: executed.run.status,
+        executionMs: executed.run.executionMs,
+        inputs: executed.run.inputs || [],
+        output: executed.run.output,
+        error: executed.run.error,
+      });
+
+      for (const next of executionGraph.adjacency.get(id) ?? []) {
+        pendingIndegree.set(next, (pendingIndegree.get(next) ?? 1) - 1);
+        if ((pendingIndegree.get(next) ?? 0) === 0) {
+          scheduleNode(next);
+        }
+      }
+    })().finally(() => {
+      inFlight.delete(task);
+    });
+
+    inFlight.add(task);
+  };
+
+  executionGraph.initialReady.forEach(scheduleNode);
+
+  while (inFlight.size > 0) {
+    await Promise.race([...inFlight]);
   }
 
   const finishedNodes = resolveWorkflowNodes(
@@ -1147,7 +1180,14 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
                     {
                       id: `field_${crypto.randomUUID()}`,
                       type,
-                      label: type === "image_field" ? `image_field_${node.data.fields.length}` : `text_field_${node.data.fields.length}`,
+                      label:
+                        type === "image_field"
+                          ? `image_field_${node.data.fields.length}`
+                          : type === "boolean_field"
+                            ? `boolean_field_${node.data.fields.length}`
+                            : type === "number_field"
+                              ? `number_field_${node.data.fields.length}`
+                            : `text_field_${node.data.fields.length}`,
                       value: "",
                     },
                   ],
@@ -1156,6 +1196,57 @@ export const useWorkflowStudioStore = create<WorkflowState>((set, get) => {
             : node,
         ) as WorkflowNode[];
         const graph = finalizeGraph(nextNodes, state.edges);
+        const synced = syncWorkflow(state, graph);
+        return { ...synced, undoStack: [...state.undoStack, snapshot(state)], redoStack: [] };
+      }),
+
+    addRequestFieldAndConnect: (targetNodeId, targetHandle, field) =>
+      set((state) => {
+        const requestNode = findPrimaryRequestNode(state.nodes);
+        if (!requestNode || requestNode.data.nodeType !== "request") {
+          return state;
+        }
+
+        const existingEdge = state.edges.find(
+          (edge) => edge.target === targetNodeId && edge.targetHandle === targetHandle && edge.source === requestNode.id,
+        );
+        if (existingEdge) {
+          return state;
+        }
+
+        const newFieldId = `field_${crypto.randomUUID()}`;
+        const nextNodes = state.nodes.map((node) =>
+          node.id === requestNode.id && node.data.nodeType === "request"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  fields: [
+                    ...node.data.fields,
+                    {
+                      id: newFieldId,
+                      label: field.label,
+                      type: field.type,
+                      value: field.value,
+                    },
+                  ],
+                },
+              }
+            : node,
+        ) as WorkflowNode[];
+
+        const nextEdge = styleEdge(
+          {
+            id: `edge-${crypto.randomUUID()}`,
+            source: requestNode.id,
+            sourceHandle: newFieldId,
+            target: targetNodeId,
+            targetHandle,
+          } as WorkflowEdge,
+          nextNodes,
+        );
+
+        const graph = finalizeGraph(nextNodes, [...state.edges, nextEdge]);
         const synced = syncWorkflow(state, graph);
         return { ...synced, undoStack: [...state.undoStack, snapshot(state)], redoStack: [] };
       }),

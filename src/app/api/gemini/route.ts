@@ -7,6 +7,13 @@ const schema = z.object({
   prompt: z.string().min(1),
   systemPrompt: z.string().optional(),
   imageInput: z.string().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().positive().optional(),
+  topP: z.number().min(0).max(1).optional(),
+  topK: z.number().int().min(0).optional(),
+  seed: z.number().int().min(0).optional(),
+  stopSequences: z.array(z.string()).optional(),
+  jsonMode: z.boolean().optional(),
 });
 
 const FALLBACK_MODELS = [
@@ -83,7 +90,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { model, prompt, systemPrompt, imageInput } = parsed.data;
+  const { model, prompt, systemPrompt, imageInput, temperature, maxTokens, topP, topK, stopSequences, jsonMode } = parsed.data;
   const client = new GoogleGenerativeAI(apiKey);
 
   const parts: Part[] = [{ text: prompt }];
@@ -100,6 +107,14 @@ export async function POST(request: Request) {
       const genModel = client.getGenerativeModel({ model: modelName });
       const result = await genModel.generateContent({
         systemInstruction: systemPrompt || undefined,
+        generationConfig: {
+          temperature,
+          maxOutputTokens: maxTokens,
+          topP,
+          topK,
+          stopSequences: stopSequences?.length ? stopSequences : undefined,
+          responseMimeType: jsonMode ? "application/json" : undefined,
+        },
         contents: [{ role: "user", parts }],
       });
 
@@ -162,4 +177,3 @@ export async function POST(request: Request) {
     { status: 503 }
   );
 }
-

@@ -38,7 +38,7 @@ export function getSourceValue(node: WorkflowNode, handle?: string) {
   }
 
   if (node.data.nodeType === "cropImage") {
-    return node.data.outputImage ?? node.data.imageUrl;
+    return node.data.outputImage ?? "";
   }
 
   if (node.data.nodeType === "gemini") {
@@ -64,6 +64,34 @@ export function getIncomingValues(edges: WorkflowEdge[], nodes: WorkflowNode[], 
       return getSourceValue(sourceNode, edge.sourceHandle ?? undefined);
     })
     .filter((value): value is string => Boolean(value));
+}
+
+function getIncomingNumber(edges: WorkflowEdge[], nodes: WorkflowNode[], nodeId: string, handle: string, fallback: number) {
+  const value = getIncomingValue(edges, nodes, nodeId, handle);
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getIncomingBoolean(edges: WorkflowEdge[], nodes: WorkflowNode[], nodeId: string, handle: string, fallback: boolean) {
+  const value = getIncomingValue(edges, nodes, nodeId, handle);
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+
+  return fallback;
 }
 
 export function buildResponseItems(edges: WorkflowEdge[], nodes: WorkflowNode[], responseNodeId: string): ResponseItem[] {
@@ -94,6 +122,27 @@ function acceptsHandle(target: WorkflowNode, handle: string, kind?: DataKind) {
     }
 
     if (handle === "prompt" || handle === "system_prompt") {
+      return kind === "text";
+    }
+
+    if (
+      [
+        "temperature",
+        "max_tokens",
+        "reasoning",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "min_p",
+        "top_a",
+        "seed",
+        "stop",
+        "response_format",
+        "settings",
+      ].includes(handle)
+    ) {
       return kind === "text";
     }
 
@@ -170,7 +219,15 @@ function createsCycle(sourceId: string, targetId: string, edges: WorkflowEdge[])
 function createField(field: Partial<RequestField> & Pick<RequestField, "type">): RequestField {
   return {
     id: field.id ?? `field_${crypto.randomUUID()}`,
-    label: field.label ?? (field.type === "image_field" ? "image_field" : "text_field"),
+    label:
+      field.label ??
+      (field.type === "image_field"
+        ? "image_field"
+        : field.type === "boolean_field"
+          ? "boolean_field"
+          : field.type === "number_field"
+            ? "number_field"
+          : "text_field"),
     type: field.type,
     value: field.value ?? "",
   };
@@ -249,6 +306,19 @@ export function createNodeTemplate(type: WorkflowNodeType, index: number): Workf
       imageInput: "",
       response: "",
       settingsOpen: false,
+      temperature: 0.7,
+      maxTokens: 1024,
+      reasoning: false,
+      topP: 1,
+      topK: 0,
+      frequencyPenalty: 0,
+      presencePenalty: 0,
+      repetitionPenalty: 1,
+      minP: 0,
+      topA: 0,
+      seed: 0,
+      stopSequences: "",
+      jsonMode: false,
     },
   };
 }
@@ -272,12 +342,48 @@ export function edgeColorForKind(kind?: DataKind) {
   return "#22c55e";
 }
 
+function edgeColorForTarget(targetNode: WorkflowNode | undefined, targetHandle?: string, sourceKind?: DataKind) {
+  if (!targetNode) {
+    return edgeColorForKind(sourceKind);
+  }
+
+  if (targetNode.data.nodeType === "gemini") {
+    if (targetHandle === "image_vision" || targetHandle === "reasoning" || targetHandle === "response_format") {
+      return "#4f7cff";
+    }
+
+    if (targetHandle === "stop" || targetHandle === "prompt" || targetHandle === "system_prompt") {
+      return "#f59e0b";
+    }
+
+    return "#ec4899";
+  }
+
+  if (targetNode.data.nodeType === "cropImage") {
+    return targetHandle === "input_image" ? "#4f7cff" : "#ec4899";
+  }
+
+  if (targetNode.data.nodeType === "response") {
+    return "#22c55e";
+  }
+
+  return edgeColorForKind(sourceKind);
+}
+
 export function styleEdge(edge: WorkflowEdge, nodes: WorkflowNode[]): WorkflowEdge {
+  const sourceNode = nodes.find((node) => node.id === edge.source);
+  const targetNode = nodes.find((node) => node.id === edge.target);
+  const stroke = edgeColorForTarget(
+    targetNode,
+    edge.targetHandle ?? undefined,
+    sourceNode ? sourceKindForHandle(sourceNode, edge.sourceHandle ?? undefined) : undefined,
+  );
+
   return {
     ...edge,
     animated: false,
     style: {
-      stroke: "#818cf8", // Sleek premium indigo/purple
+      stroke,
       strokeWidth: 2,
       opacity: 0.9,
     },
@@ -294,6 +400,19 @@ export function resolveWorkflowNodes(nodes: WorkflowNode[], edges: WorkflowEdge[
           prompt: getIncomingValue(edges, nodes, node.id, "prompt") ?? node.data.prompt,
           systemPrompt: getIncomingValue(edges, nodes, node.id, "system_prompt") ?? node.data.systemPrompt,
           imageInput: getIncomingValue(edges, nodes, node.id, "image_vision") ?? node.data.imageInput,
+          temperature: getIncomingNumber(edges, nodes, node.id, "temperature", node.data.temperature ?? 0.7),
+          maxTokens: getIncomingNumber(edges, nodes, node.id, "max_tokens", node.data.maxTokens ?? 1024),
+          reasoning: getIncomingBoolean(edges, nodes, node.id, "reasoning", node.data.reasoning ?? false),
+          topP: getIncomingNumber(edges, nodes, node.id, "top_p", node.data.topP ?? 1),
+          topK: getIncomingNumber(edges, nodes, node.id, "top_k", node.data.topK ?? 0),
+          frequencyPenalty: getIncomingNumber(edges, nodes, node.id, "frequency_penalty", node.data.frequencyPenalty ?? 0),
+          presencePenalty: getIncomingNumber(edges, nodes, node.id, "presence_penalty", node.data.presencePenalty ?? 0),
+          repetitionPenalty: getIncomingNumber(edges, nodes, node.id, "repetition_penalty", node.data.repetitionPenalty ?? 1),
+          minP: getIncomingNumber(edges, nodes, node.id, "min_p", node.data.minP ?? 0),
+          topA: getIncomingNumber(edges, nodes, node.id, "top_a", node.data.topA ?? 0),
+          seed: getIncomingNumber(edges, nodes, node.id, "seed", node.data.seed ?? 0),
+          stopSequences: getIncomingValue(edges, nodes, node.id, "stop") ?? node.data.stopSequences,
+          jsonMode: getIncomingBoolean(edges, nodes, node.id, "response_format", node.data.jsonMode ?? false),
         },
       };
     }

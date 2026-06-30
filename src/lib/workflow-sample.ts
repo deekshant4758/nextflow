@@ -66,7 +66,20 @@ const sampleNodesBase: WorkflowNode[] = [
       systemPrompt: "",
       imageInput: "",
       response: "",
-      settingsOpen: false
+      settingsOpen: false,
+      temperature: 0.7,
+      maxTokens: 1024,
+      reasoning: false,
+      topP: 1,
+      topK: 0,
+      frequencyPenalty: 0,
+      presencePenalty: 0,
+      repetitionPenalty: 1,
+      minP: 0,
+      topA: 0,
+      seed: 0,
+      stopSequences: "",
+      jsonMode: false
     }
   },
   {
@@ -79,7 +92,7 @@ const sampleNodesBase: WorkflowNode[] = [
     data: {
       label: "Crop Image",
       nodeType: "cropImage",
-      imageUrl: "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcSOubvsnSk6jCp3msQODNV3QVYZZG-IIhufJI6oMhfakE0E3YDBPBfhFPFfLvMiztziekcF-Pkm5FWfD8pLEv3yppF3-WSZm2ji1_wGgaqJnHIEHfTgDydeUA",
+      imageUrl: "",
       xPercent: "20",
       yPercent: "20",
       widthPercent: "60",
@@ -96,7 +109,7 @@ const sampleNodesBase: WorkflowNode[] = [
     data: {
       label: "Crop Image",
       nodeType: "cropImage",
-      imageUrl: "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcSOubvsnSk6jCp3msQODNV3QVYZZG-IIhufJI6oMhfakE0E3YDBPBfhFPFfLvMiztziekcF-Pkm5FWfD8pLEv3yppF3-WSZm2ji1_wGgaqJnHIEHfTgDydeUA",
+      imageUrl: "",
       xPercent: "0",
       yPercent: "0",
       widthPercent: "100",
@@ -118,7 +131,20 @@ const sampleNodesBase: WorkflowNode[] = [
       systemPrompt: "Condense the following product description into a tweet-length hook (under 240 characters).",
       imageInput: "",
       response: "",
-      settingsOpen: false
+      settingsOpen: false,
+      temperature: 0.7,
+      maxTokens: 1024,
+      reasoning: false,
+      topP: 1,
+      topK: 0,
+      frequencyPenalty: 0,
+      presencePenalty: 0,
+      repetitionPenalty: 1,
+      minP: 0,
+      topA: 0,
+      seed: 0,
+      stopSequences: "",
+      jsonMode: false
     }
   },
   {
@@ -134,9 +160,22 @@ const sampleNodesBase: WorkflowNode[] = [
       model: "gemini-2.5-flash",
       prompt: "",
       systemPrompt: "You are a social media manager.\nCombine the tweet hook and the two product crops into a final marketing post.",
-      imageInput: "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcSOubvsnSk6jCp3msQODNV3QVYZZG-IIhufJI6oMhfakE0E3YDBPBfhFPFfLvMiztziekcF-Pkm5FWfD8pLEv3yppF3-WSZm2ji1_wGgaqJnHIEHfTgDydeUA",
+      imageInput: "",
       response: "",
-      settingsOpen: false
+      settingsOpen: false,
+      temperature: 0.7,
+      maxTokens: 1024,
+      reasoning: false,
+      topP: 1,
+      topK: 0,
+      frequencyPenalty: 0,
+      presencePenalty: 0,
+      repetitionPenalty: 1,
+      minP: 0,
+      topA: 0,
+      seed: 0,
+      stopSequences: "",
+      jsonMode: false
     }
   }
 ];
