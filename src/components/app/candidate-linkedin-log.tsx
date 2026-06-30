@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 
 const candidateLinkedInUrl =
-  process.env.NEXT_PUBLIC_CANDIDATE_LINKEDIN_URL ?? "MISSING_LINKEDIN_URL";
+  process.env.NEXT_PUBLIC_CANDIDATE_LINKEDIN_URL ?? "https://www.linkedin.com/in/deekshant-gupta-986774202/";
 
 export function CandidateLinkedInLog() {
   const pathname = usePathname();

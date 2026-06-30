@@ -14,6 +14,7 @@ import {
   Pencil,
   Play,
   Plus,
+  RotateCcw,
   ToggleLeft,
   Trash2,
   Upload,
@@ -29,6 +30,21 @@ import { useWorkflowStudioStore } from "@/components/workflow/workflow-store";
 import type { CropImageNodeData, GeminiNodeData, RequestNodeData, ResponseNodeData } from "@/types/workflow";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const GEMINI_DEFAULTS = {
+  temperature: 0.7,
+  maxTokens: 1024,
+  reasoning: false,
+  topP: 1,
+  topK: 0,
+  frequencyPenalty: 0,
+  presencePenalty: 0,
+  repetitionPenalty: 1,
+  minP: 0,
+  topA: 0,
+  seed: 0,
+  stopSequences: "",
+  jsonMode: false,
+} as const;
 
 async function parseJsonSafely(response: Response) {
   const text = await response.text();
@@ -43,11 +59,13 @@ async function parseJsonSafely(response: Response) {
 // ─── Field type menu items ───────────────────────────────────────────────────
 const FIELD_TYPE_OPTIONS = [
   { label: "Text", icon: AlignLeft, type: "text_field" as const },
+  { label: "Number", icon: Hash, type: "number_field" as const },
   { label: "Image", icon: ImageIcon, type: "image_field" as const },
+  { label: "Boolean", icon: ToggleLeft, type: "boolean_field" as const },
 ];
 
 // ─── Add-field dropdown ──────────────────────────────────────────────────────
-function AddFieldDropdown({ onAdd }: { onAdd: (type: "text_field" | "image_field") => void }) {
+function AddFieldDropdown({ onAdd }: { onAdd: (type: "text_field" | "number_field" | "image_field" | "boolean_field") => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -104,6 +122,7 @@ function NodeShell({
   headerRight,
   icon,
   nodeType,
+  selected,
 }: {
   id: string;
   title: string;
@@ -112,6 +131,7 @@ function NodeShell({
   headerRight?: React.ReactNode;
   icon?: React.ReactNode;
   nodeType?: string;
+  selected?: boolean;
 }) {
   const runSingleNode = useWorkflowStudioStore((state) => state.runSingleNode);
   const removeNode = useWorkflowStudioStore((state) => state.removeNode);
@@ -128,6 +148,7 @@ function NodeShell({
         "relative w-[380px] min-w-[380px] rounded-2xl border bg-white shadow-[0_4px_24px_rgba(15,23,42,0.08)]",
         nodeType === "request" ? "border-[rgba(245,158,11,0.3)]" : nodeType === "response" ? "border-[rgba(34,197,94,0.3)]" : "border-[#e8eaed]",
         running && "running-node",
+        selected && "border-[#8b5cf6] ring-4 ring-[#8b5cf6]/15 shadow-[0_8px_30px_rgba(139,92,246,0.18)]",
       )}
       style={{ overflow: "visible" }}
     >
@@ -371,8 +392,97 @@ function SliderRow({
   );
 }
 
+function SettingsHandle({ id, color, top = 18 }: { id: string; color: string; top?: number }) {
+  return (
+    <Handle
+      type="target"
+      position={Position.Left}
+      id={id}
+      className="!absolute !h-[14px] !w-[14px] !rounded-full !border-2"
+      style={{
+        left: -23,
+        top,
+        transform: "translateY(-50%)",
+        background: color,
+        borderColor: color === "#4f7cff" ? "rgba(79,124,255,0.4)" : color === "#f59e0b" ? "rgba(245,158,11,0.4)" : "rgba(236,72,153,0.4)",
+        boxShadow: color === "#4f7cff" ? "0 0 8px rgba(79,124,255,0.3)" : color === "#f59e0b" ? "0 0 8px rgba(245,158,11,0.3)" : "0 0 8px rgba(236,72,153,0.3)",
+      }}
+    />
+  );
+}
+
+function SettingsActionButton({
+  children,
+  onClick,
+  disabled = false,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="nodrag inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-[#e5e7eb] bg-[#f5f5f5] text-[#9ca3af] transition-colors hover:bg-[#efefef] hover:text-[#6b7280] disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+const compactSliderClassName =
+  "nodrag h-1.5 min-w-0 flex-1 cursor-pointer accent-[#6366f1] disabled:opacity-40";
+
+function SettingsRowLabel({ label }: { label: string }) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+      <span className="text-[11px] text-[#6b7280]">{label}</span>
+      <Info className="h-3 w-3 shrink-0 text-[#c0c4cc]" />
+    </div>
+  );
+}
+
+function SettingsToggle({
+  checked,
+  onChange,
+  falseLabel = "False",
+  trueLabel = "True",
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  falseLabel?: string;
+  trueLabel?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className={cn("text-[10px] font-medium", checked ? "text-[#9ca3af]" : "text-[#6b7280]", disabled && "opacity-50")}>{falseLabel}</span>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className={cn(
+          "nodrag relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+          checked ? "bg-[#6366f1]" : "bg-[#e5e7eb]",
+        )}
+      >
+        <span
+          className={cn(
+            "block h-5 w-5 rounded-full bg-white shadow-sm transition-transform",
+            checked ? "translate-x-[21px]" : "translate-x-0.5",
+          )}
+        />
+      </button>
+      <span className={cn("text-[10px] font-medium", checked ? "text-[#6b7280]" : "text-[#9ca3af]", disabled && "opacity-50")}>{trueLabel}</span>
+    </div>
+  );
+}
+
 // ─── RequestNode ─────────────────────────────────────────────────────────────
-function RequestNode({ id, data }: NodeProps) {
+function RequestNode({ id, data, selected }: NodeProps) {
   const typedData = data as RequestNodeData;
   const addRequestField = useWorkflowStudioStore((state) => state.addRequestField);
   const updateRequestField = useWorkflowStudioStore((state) => state.updateRequestField);
@@ -384,6 +494,7 @@ function RequestNode({ id, data }: NodeProps) {
       title="Request-Inputs"
       running={typedData.running}
       nodeType="request"
+      selected={selected}
       headerRight={
         <AddFieldDropdown onAdd={(type) => addRequestField(id, type)} />
       }
@@ -391,6 +502,8 @@ function RequestNode({ id, data }: NodeProps) {
       <div className="space-y-3 px-4 py-3">
         {typedData.fields.map((field) => {
           const isImage = field.type === "image_field";
+          const isBoolean = field.type === "boolean_field";
+          const isNumber = field.type === "number_field";
           return (
             <div key={field.id} className="relative">
               {/* Field header row */}
@@ -417,6 +530,23 @@ function RequestNode({ id, data }: NodeProps) {
                   value={field.value}
                   onChange={(value) => updateRequestField(id, field.id, { value })}
                 />
+              ) : isBoolean ? (
+                <label className="flex h-10 items-center gap-2 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 text-[12px] text-[#111827]">
+                  <input
+                    type="checkbox"
+                    checked={field.value === "true"}
+                    onChange={(event) => updateRequestField(id, field.id, { value: event.target.checked ? "true" : "false" })}
+                    className="h-4 w-4 rounded border-[#d1d5db] text-[#6366f1] focus:ring-[#6366f1]"
+                  />
+                  <span>{field.value === "true" ? "True" : "False"}</span>
+                </label>
+              ) : isNumber ? (
+                <input
+                  type="number"
+                  value={field.value}
+                  onChange={(event) => updateRequestField(id, field.id, { value: event.target.value })}
+                  className="h-10 w-full rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 text-[12px] text-[#111827] outline-none focus:border-[#c7d2fe] focus:bg-white transition-colors nodrag"
+                />
               ) : (
                 <textarea
                   rows={2}
@@ -437,10 +567,12 @@ function RequestNode({ id, data }: NodeProps) {
                   right: -23,
                   top: "50%",
                   transform: "translateY(-50%)",
-                  background: isImage ? "#4f7cff" : "#f59e0b",
-                  borderColor: isImage ? "rgba(79,124,255,0.4)" : "rgba(245,158,11,0.4)",
-                  boxShadow: isImage
+                  background: isImage || isBoolean ? "#4f7cff" : isNumber ? "#ec4899" : "#f59e0b",
+                  borderColor: isImage || isBoolean ? "rgba(79,124,255,0.4)" : isNumber ? "rgba(236,72,153,0.4)" : "rgba(245,158,11,0.4)",
+                  boxShadow: isImage || isBoolean
                     ? "0 0 8px rgba(79,124,255,0.3)"
+                    : isNumber
+                      ? "0 0 8px rgba(236,72,153,0.3)"
                     : "0 0 8px rgba(245,158,11,0.3)",
                 }}
               />
@@ -453,15 +585,34 @@ function RequestNode({ id, data }: NodeProps) {
 }
 
 // ─── GeminiNode ──────────────────────────────────────────────────────────────
-function GeminiNode({ id, data }: NodeProps) {
+function GeminiNode({ id, data, selected }: NodeProps) {
   const typedData = data as GeminiNodeData;
   const edges = useWorkflowStudioStore((state) => state.edges);
   const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
+  const addRequestFieldAndConnect = useWorkflowStudioStore((state) => state.addRequestFieldAndConnect);
+  const settingsOpen = typedData.settingsOpen ?? false;
+  const sliderSettings = [
+    { key: "temperature", label: "Temperature", min: 0, max: 2, step: 0.1, defaultValue: GEMINI_DEFAULTS.temperature, handleId: "temperature" },
+    { key: "topP", label: "Top P", min: 0, max: 1, step: 0.1, defaultValue: GEMINI_DEFAULTS.topP, handleId: "top_p" },
+    { key: "topK", label: "Top K", min: 0, max: 100, step: 1, defaultValue: GEMINI_DEFAULTS.topK, handleId: "top_k" },
+    { key: "frequencyPenalty", label: "Frequency Penalty", min: 0, max: 2, step: 0.1, defaultValue: GEMINI_DEFAULTS.frequencyPenalty, handleId: "frequency_penalty" },
+    { key: "presencePenalty", label: "Presence Penalty", min: 0, max: 2, step: 0.1, defaultValue: GEMINI_DEFAULTS.presencePenalty, handleId: "presence_penalty" },
+    { key: "repetitionPenalty", label: "Repetition Penalty", min: 0, max: 2, step: 0.1, defaultValue: GEMINI_DEFAULTS.repetitionPenalty, handleId: "repetition_penalty" },
+    { key: "minP", label: "Min P", min: 0, max: 1, step: 0.1, defaultValue: GEMINI_DEFAULTS.minP, handleId: "min_p" },
+    { key: "topA", label: "Top A", min: 0, max: 1, step: 0.1, defaultValue: GEMINI_DEFAULTS.topA, handleId: "top_a" },
+  ] as const;
+
+  const connectRequestInput = (
+    targetHandle: string,
+    field: { label: string; type: "text_field" | "number_field" | "image_field" | "boolean_field"; value: string },
+  ) => {
+    addRequestFieldAndConnect(id, targetHandle, field);
+  };
 
   return (
     <>
-      <NodeShell id={id} title="Gemini 2.5 Flash" running={typedData.running}>
-        <div className="space-y-3 px-4 py-3">
+      <NodeShell id={id} title="Gemini 2.5 Flash" running={typedData.running} selected={selected}>
+        <div className="space-y-2 px-4 py-3">
           {/* Prompt */}
           <div className="relative overflow-visible">
             <Handle
@@ -488,7 +639,11 @@ function GeminiNode({ id, data }: NodeProps) {
                 placeholder="Enter your prompt..."
                 className="w-full resize-none rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-[12px] text-[#111827] outline-none placeholder:text-[#c0c4cc] disabled:opacity-50 focus:border-[#c7d2fe] focus:bg-white transition-colors nowheel nodrag custom-scrollbar max-h-24 overflow-y-auto"
               />
-              <button type="button" className="absolute bottom-2 right-2 text-[#d1d5db] hover:text-[#6b7280]">
+              <button
+                type="button"
+                onClick={() => connectRequestInput("prompt", { label: "prompt", type: "text_field", value: typedData.prompt || "" })}
+                className="absolute bottom-2 right-2 cursor-pointer text-[#d1d5db] hover:text-[#6b7280]"
+              >
                 <Plus className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -520,7 +675,11 @@ function GeminiNode({ id, data }: NodeProps) {
                 placeholder="You are a helpful assistant..."
                 className="w-full resize-none rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-[12px] text-[#111827] outline-none placeholder:text-[#c0c4cc] disabled:opacity-50 focus:border-[#c7d2fe] focus:bg-white transition-colors nowheel nodrag custom-scrollbar max-h-24 overflow-y-auto"
               />
-              <button type="button" className="absolute bottom-2 right-2 text-[#d1d5db] hover:text-[#6b7280]">
+              <button
+                type="button"
+                onClick={() => connectRequestInput("system_prompt", { label: "system_prompt", type: "text_field", value: typedData.systemPrompt || "" })}
+                className="absolute bottom-2 right-2 cursor-pointer text-[#d1d5db] hover:text-[#6b7280]"
+              >
                 <Plus className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -548,6 +707,227 @@ function GeminiNode({ id, data }: NodeProps) {
               disabled={isInputConnected(edges, id, "image_vision")}
               onChange={(value) => updateNodeData(id, { imageInput: value })}
             />
+            <button
+              type="button"
+              onClick={() => connectRequestInput("image_vision", { label: "image_field", type: "image_field", value: typedData.imageInput || "" })}
+              className="absolute right-2 top-[34px] z-10 cursor-pointer text-[#d1d5db] hover:text-[#6b7280]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="relative overflow-visible">
+            <button
+              type="button"
+              onClick={() => updateNodeData(id, { settingsOpen: !settingsOpen })}
+              className="nodrag flex w-full cursor-pointer items-center gap-2 py-0.5 text-left"
+            >
+              <ChevronDown
+                className={cn(
+                  "h-4 w-4 text-[#9ca3af] transition-transform",
+                  settingsOpen && "rotate-180",
+                )}
+              />
+              <span className="text-[12px] font-medium text-[#6b7280]">Settings</span>
+            </button>
+
+            {settingsOpen && (
+              <div className="mt-1 space-y-2">
+                <div className="relative overflow-visible">
+                  <SettingsHandle id="temperature" color="#ec4899" />
+                  <div className="flex items-center gap-1.5">
+                    <SettingsRowLabel label="Temperature" />
+                    <input
+                      type="range"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={typedData.temperature ?? GEMINI_DEFAULTS.temperature}
+                      onChange={(event) => updateNodeData(id, { temperature: Number(event.target.value) })}
+                      disabled={isInputConnected(edges, id, "temperature")}
+                      className={compactSliderClassName}
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={typedData.temperature ?? GEMINI_DEFAULTS.temperature}
+                      onChange={(event) => updateNodeData(id, { temperature: Number(event.target.value) })}
+                      disabled={isInputConnected(edges, id, "temperature")}
+                      className="nodrag w-[40px] rounded-xl border border-[#e5e7eb] bg-[#f5f5f5] px-1.5 py-1.5 text-center text-[12px] text-[#111827] outline-none disabled:opacity-50"
+                    />
+                    <SettingsActionButton onClick={() => updateNodeData(id, { temperature: GEMINI_DEFAULTS.temperature })}>
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </SettingsActionButton>
+                    <SettingsActionButton
+                      onClick={() => connectRequestInput("temperature", { label: "temperature", type: "number_field", value: String(typedData.temperature ?? GEMINI_DEFAULTS.temperature) })}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </SettingsActionButton>
+                  </div>
+                </div>
+
+                <div className="relative overflow-visible">
+                  <SettingsHandle id="max_tokens" color="#ec4899" />
+                  <div className="flex items-center justify-between gap-1.5">
+                    <SettingsRowLabel label="Max Tokens" />
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={typedData.maxTokens ?? GEMINI_DEFAULTS.maxTokens}
+                        onChange={(event) => updateNodeData(id, { maxTokens: Number(event.target.value) })}
+                        disabled={isInputConnected(edges, id, "max_tokens")}
+                        className="nodrag w-[74px] rounded-xl border border-[#e5e7eb] bg-[#f5f5f5] px-2 py-1.5 text-center text-[12px] text-[#111827] outline-none disabled:opacity-50"
+                      />
+                      <SettingsActionButton
+                        onClick={() => connectRequestInput("max_tokens", { label: "max_tokens", type: "number_field", value: String(typedData.maxTokens ?? GEMINI_DEFAULTS.maxTokens) })}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </SettingsActionButton>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative overflow-visible">
+                  <SettingsHandle id="reasoning" color="#4f7cff" />
+                  <div className="flex items-center justify-between gap-1.5">
+                    <SettingsRowLabel label="Reasoning" />
+                    <div className="flex items-center gap-1.5">
+                      <SettingsToggle
+                        checked={typedData.reasoning ?? GEMINI_DEFAULTS.reasoning}
+                        onChange={(checked) => updateNodeData(id, { reasoning: checked })}
+                        disabled={isInputConnected(edges, id, "reasoning")}
+                      />
+                      <SettingsActionButton
+                        onClick={() => connectRequestInput("reasoning", { label: "reasoning", type: "boolean_field", value: (typedData.reasoning ?? GEMINI_DEFAULTS.reasoning) ? "true" : "false" })}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </SettingsActionButton>
+                    </div>
+                  </div>
+                </div>
+
+                {sliderSettings.slice(1).map((setting) => (
+                  <div key={setting.key} className="relative overflow-visible">
+                    <SettingsHandle id={setting.handleId} color="#ec4899" />
+                    <div className="flex items-center gap-1.5">
+                      <SettingsRowLabel label={setting.label} />
+                      <input
+                        type="range"
+                        min={setting.min}
+                        max={setting.max}
+                        step={setting.step}
+                        value={typedData[setting.key] ?? setting.defaultValue}
+                        onChange={(event) =>
+                          updateNodeData(id, { [setting.key]: Number(event.target.value) } as Partial<GeminiNodeData>)
+                        }
+                        disabled={isInputConnected(edges, id, setting.handleId)}
+                        className={compactSliderClassName}
+                      />
+                      <input
+                        type="number"
+                        min={setting.min}
+                        max={setting.max}
+                        step={setting.step}
+                        value={typedData[setting.key] ?? setting.defaultValue}
+                        onChange={(event) =>
+                          updateNodeData(id, { [setting.key]: Number(event.target.value) } as Partial<GeminiNodeData>)
+                        }
+                        disabled={isInputConnected(edges, id, setting.handleId)}
+                        className="nodrag w-[40px] rounded-xl border border-[#e5e7eb] bg-[#f5f5f5] px-1.5 py-1.5 text-center text-[12px] text-[#111827] outline-none disabled:opacity-50"
+                      />
+                      <SettingsActionButton
+                        onClick={() =>
+                          updateNodeData(id, { [setting.key]: setting.defaultValue } as Partial<GeminiNodeData>)
+                        }
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </SettingsActionButton>
+                      <SettingsActionButton
+                        onClick={() =>
+                          connectRequestInput(setting.handleId, {
+                            label: setting.handleId,
+                            type: "number_field",
+                            value: String(typedData[setting.key] ?? setting.defaultValue),
+                          })
+                        }
+                      >
+                        <Plus className="h-4 w-4" />
+                      </SettingsActionButton>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="relative overflow-visible">
+                  <SettingsHandle id="seed" color="#ec4899" />
+                  <div className="flex items-center justify-between gap-1.5">
+                    <SettingsRowLabel label="Seed" />
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={typedData.seed ?? GEMINI_DEFAULTS.seed}
+                        onChange={(event) => updateNodeData(id, { seed: Number(event.target.value) })}
+                        disabled={isInputConnected(edges, id, "seed")}
+                        className="nodrag w-[62px] rounded-xl border border-[#e5e7eb] bg-[#f5f5f5] px-2 py-1.5 text-center text-[12px] text-[#111827] outline-none disabled:opacity-50"
+                      />
+                      <SettingsActionButton
+                        onClick={() => connectRequestInput("seed", { label: "seed", type: "number_field", value: String(typedData.seed ?? GEMINI_DEFAULTS.seed) })}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </SettingsActionButton>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative overflow-visible">
+                  <SettingsHandle id="stop" color="#f59e0b" />
+                  <div className="space-y-0.5">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <SettingsRowLabel label="Stop Sequences" />
+                      <SettingsActionButton
+                        onClick={() => connectRequestInput("stop", { label: "stop_sequences", type: "text_field", value: typedData.stopSequences ?? GEMINI_DEFAULTS.stopSequences })}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </SettingsActionButton>
+                    </div>
+                    <div className="relative">
+                      <textarea
+                        rows={3}
+                        value={typedData.stopSequences ?? GEMINI_DEFAULTS.stopSequences}
+                        onChange={(event) => updateNodeData(id, { stopSequences: event.target.value })}
+                        placeholder="e.g. END, STOP, ###"
+                        disabled={isInputConnected(edges, id, "stop")}
+                        className="nodrag nowheel w-full resize-y rounded-xl border border-[#e5e7eb] bg-[#f5f5f5] px-3 py-2.5 text-[12px] text-[#111827] outline-none placeholder:text-[#9ca3af] disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative overflow-visible">
+                  <SettingsHandle id="response_format" color="#4f7cff" />
+                  <div className="flex items-center justify-between gap-1.5">
+                    <SettingsRowLabel label="JSON Mode" />
+                    <div className="flex items-center gap-1.5">
+                      <SettingsToggle
+                        checked={typedData.jsonMode ?? GEMINI_DEFAULTS.jsonMode}
+                        onChange={(checked) => updateNodeData(id, { jsonMode: checked })}
+                        disabled={isInputConnected(edges, id, "response_format")}
+                      />
+                      <SettingsActionButton
+                        onClick={() => connectRequestInput("response_format", { label: "json_mode", type: "boolean_field", value: (typedData.jsonMode ?? GEMINI_DEFAULTS.jsonMode) ? "true" : "false" })}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </SettingsActionButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Response output */}
@@ -581,7 +961,7 @@ function GeminiNode({ id, data }: NodeProps) {
 }
 
 // ─── CropImageNode ────────────────────────────────────────────────────────────
-function CropImageNode({ id, data }: NodeProps) {
+function CropImageNode({ id, data, selected }: NodeProps) {
   const typedData = data as CropImageNodeData;
   const edges = useWorkflowStudioStore((state) => state.edges);
   const updateNodeData = useWorkflowStudioStore((state) => state.updateNodeData);
@@ -595,7 +975,7 @@ function CropImageNode({ id, data }: NodeProps) {
 
   return (
     <>
-      <NodeShell id={id} title="Crop Image" running={typedData.running}>
+      <NodeShell id={id} title="Crop Image" running={typedData.running} selected={selected}>
         <div className="space-y-3 px-4 py-3">
           {/* Input image */}
           <div className="relative overflow-visible">
@@ -682,7 +1062,7 @@ function CropImageNode({ id, data }: NodeProps) {
 }
 
 // ─── ResponseNode ─────────────────────────────────────────────────────────────
-function ResponseNode({ id, data }: NodeProps) {
+function ResponseNode({ id, data, selected }: NodeProps) {
   const typedData = data as ResponseNodeData;
 
   return (
@@ -693,6 +1073,7 @@ function ResponseNode({ id, data }: NodeProps) {
         running={typedData.running}
         nodeType="response"
         icon={<FileOutput className="h-4 w-4" />}
+        selected={selected}
       >
         {/* Handle flush with node border */}
         <Handle

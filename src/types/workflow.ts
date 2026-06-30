@@ -4,7 +4,7 @@ export type WorkflowNodeType = "request" | "gemini" | "cropImage" | "response";
 
 export type DataKind = "text" | "image";
 
-export type RequestFieldType = "text_field" | "image_field";
+export type RequestFieldType = "text_field" | "image_field" | "boolean_field" | "number_field";
 
 export type WorkflowRunStatus = "success" | "failed" | "running" | "partial";
 export type WorkflowRunScope = "full" | "selected" | "single";
@@ -43,6 +43,19 @@ export type GeminiNodeData = BaseNodeData & {
   imageInput?: string;
   response?: string;
   settingsOpen?: boolean;
+  temperature?: number;
+  maxTokens?: number;
+  reasoning?: boolean;
+  topP?: number;
+  topK?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  repetitionPenalty?: number;
+  minP?: number;
+  topA?: number;
+  seed?: number;
+  stopSequences?: string;
+  jsonMode?: boolean;
 };
 
 export type CropImageNodeData = BaseNodeData & {
